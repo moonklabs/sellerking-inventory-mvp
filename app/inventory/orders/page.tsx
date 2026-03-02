@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -13,13 +14,20 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { mockInventoryOrders, InventoryOrder, OrderStatus, ORDER_STATUS_LABELS, formatCurrency } from '@/lib/mock-data';
+import {
+  mockInventoryOrders,
+  InventoryOrder,
+  OrderStatus,
+  ORDER_STATUS_LABELS,
+  ENABLED_STATUS_FLOW,
+  formatCurrency,
+} from '@/lib/mock-data';
 import { cn } from '@/lib/utils';
 
-const TABS: { value: OrderStatus; label: string; disabled?: boolean }[] = [
+const TABS: { value: OrderStatus; label: string; phase2?: boolean }[] = [
   { value: 'recommend', label: '입고권장' },
-  { value: 'request', label: '발주요청', disabled: true },
-  { value: 'amount_confirmed', label: '발주금액확정', disabled: true },
+  { value: 'request', label: '발주요청', phase2: true },
+  { value: 'amount_confirmed', label: '발주금액확정', phase2: true },
   { value: 'purchase_confirmed', label: '구매확정' },
   { value: 'purchase_complete', label: '구매완료' },
   { value: 'china_arrived', label: '중국창고도착' },
@@ -29,18 +37,6 @@ const TABS: { value: OrderStatus; label: string; disabled?: boolean }[] = [
   { value: 'all', label: '전체' },
 ];
 
-const STATUS_FLOW: OrderStatus[] = [
-  'recommend',
-  'request',
-  'amount_confirmed',
-  'purchase_confirmed',
-  'purchase_complete',
-  'china_arrived',
-  'china_shipped',
-  'korea_arrived',
-  'received',
-];
-
 interface InboundDialogState {
   open: boolean;
   order: InventoryOrder | null;
@@ -48,24 +44,67 @@ interface InboundDialogState {
   inboundDate: string;
 }
 
+// 활성 흐름에서 다음 상태 계산
+function getNextStatus(current: OrderStatus): OrderStatus | null {
+  const idx = ENABLED_STATUS_FLOW.indexOf(current);
+  if (idx < 0 || idx >= ENABLED_STATUS_FLOW.length - 1) return null;
+  return ENABLED_STATUS_FLOW[idx + 1];
+}
+
+function getStatusBadge(status: OrderStatus) {
+  const colors: Record<string, string> = {
+    recommend: 'bg-red-100 text-red-700',
+    request: 'bg-orange-100 text-orange-700',
+    amount_confirmed: 'bg-yellow-100 text-yellow-700',
+    purchase_confirmed: 'bg-blue-100 text-blue-700',
+    purchase_complete: 'bg-indigo-100 text-indigo-700',
+    china_arrived: 'bg-purple-100 text-purple-700',
+    china_shipped: 'bg-pink-100 text-pink-700',
+    korea_arrived: 'bg-teal-100 text-teal-700',
+    received: 'bg-green-100 text-green-700',
+  };
+  return colors[status] ?? 'bg-gray-100 text-gray-700';
+}
+
 function OrdersContent() {
   const searchParams = useSearchParams();
-  const router = useRouter();
-
   const initialTab = (searchParams.get('tab') as OrderStatus) ?? 'recommend';
+
   const [activeTab, setActiveTab] = useState<OrderStatus>(initialTab);
+  const [orders, setOrders] = useState<InventoryOrder[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inboundDialog, setInboundDialog] = useState<InboundDialogState>({
     open: false,
     order: null,
     actualQty: '',
-    inboundDate: new Date().toISOString().split('T')[0],
+    inboundDate: '2026-03-02',
   });
 
+  // localStorage에서 주문 데이터 로드 (SSR 안전)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('sellerking_orders');
+      if (stored) {
+        setOrders(JSON.parse(stored));
+      } else {
+        setOrders([...mockInventoryOrders]);
+        localStorage.setItem('sellerking_orders', JSON.stringify(mockInventoryOrders));
+      }
+    } catch {
+      setOrders([...mockInventoryOrders]);
+    }
+  }, []);
+
+  // URL 파라미터로 탭 초기화
+  useEffect(() => {
+    const tabFromUrl = searchParams.get('tab') as OrderStatus | null;
+    if (tabFromUrl && TABS.some((t) => t.value === tabFromUrl && !t.phase2)) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [searchParams]);
+
   const filteredOrders =
-    activeTab === 'all'
-      ? mockInventoryOrders
-      : mockInventoryOrders.filter((o) => o.status === activeTab);
+    activeTab === 'all' ? orders : orders.filter((o) => o.status === activeTab);
 
   function toggleTab(tab: OrderStatus) {
     setActiveTab(tab);
@@ -89,28 +128,42 @@ function OrdersContent() {
     }
   }
 
-  // 다음 상태로 이동
-  function getNextStatus(current: OrderStatus): OrderStatus | null {
-    const idx = STATUS_FLOW.indexOf(current);
-    if (idx < 0 || idx >= STATUS_FLOW.length - 1) return null;
-    return STATUS_FLOW[idx + 1];
+  // 선택된 주문을 다음 상태로 이동
+  function moveToNextStatus() {
+    if (selectedIds.size === 0 || activeTab === 'all') return;
+    const nextStatus = getNextStatus(activeTab);
+    if (!nextStatus) return;
+
+    const updated = orders.map((o) =>
+      selectedIds.has(o.id) ? { ...o, status: nextStatus } : o
+    );
+    setOrders(updated);
+    setSelectedIds(new Set());
+    try {
+      localStorage.setItem('sellerking_orders', JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
+  }
+
+  // 주문취소
+  function cancelOrders() {
+    if (selectedIds.size === 0) return;
+    const updated = orders.filter((o) => !selectedIds.has(o.id));
+    setOrders(updated);
+    setSelectedIds(new Set());
+    try {
+      localStorage.setItem('sellerking_orders', JSON.stringify(updated));
+    } catch {
+      // ignore
+    }
   }
 
   const currentNextStatus = activeTab !== 'all' ? getNextStatus(activeTab) : null;
 
-  function getStatusBadge(status: OrderStatus) {
-    const colors: Record<string, string> = {
-      recommend: 'bg-red-100 text-red-700',
-      request: 'bg-orange-100 text-orange-700',
-      amount_confirmed: 'bg-yellow-100 text-yellow-700',
-      purchase_confirmed: 'bg-blue-100 text-blue-700',
-      purchase_complete: 'bg-indigo-100 text-indigo-700',
-      china_arrived: 'bg-purple-100 text-purple-700',
-      china_shipped: 'bg-pink-100 text-pink-700',
-      korea_arrived: 'bg-teal-100 text-teal-700',
-      received: 'bg-green-100 text-green-700',
-    };
-    return colors[status] ?? 'bg-gray-100 text-gray-700';
+  function getOrderCount(status: OrderStatus) {
+    if (status === 'all') return orders.length;
+    return orders.filter((o) => o.status === status).length;
   }
 
   return (
@@ -118,35 +171,42 @@ function OrdersContent() {
       {/* 탭 */}
       <div className="bg-white rounded-xl border shadow-sm overflow-x-auto">
         <div className="flex border-b min-w-max">
-          {TABS.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => !tab.disabled && toggleTab(tab.value)}
-              className={cn(
-                'px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors',
-                tab.disabled
-                  ? 'pointer-events-none text-gray-300 border-transparent'
-                  : activeTab === tab.value
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              )}
-            >
-              {tab.label}
-              {tab.disabled && (
-                <span className="ml-1 text-xs">(준비중)</span>
-              )}
-              {!tab.disabled && (
-                <span className={cn(
-                  'ml-1.5 text-xs rounded-full px-1.5 py-0.5',
-                  activeTab === tab.value ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'
-                )}>
-                  {tab.value === 'all'
-                    ? mockInventoryOrders.length
-                    : mockInventoryOrders.filter((o) => o.status === tab.value).length}
-                </span>
-              )}
-            </button>
-          ))}
+          {TABS.map((tab) => {
+            const count = getOrderCount(tab.value);
+            return (
+              <button
+                key={tab.value}
+                onClick={() => !tab.phase2 && toggleTab(tab.value)}
+                className={cn(
+                  'px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors relative',
+                  tab.phase2
+                    ? 'pointer-events-none text-gray-300 border-transparent bg-gray-50'
+                    : activeTab === tab.value
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                )}
+              >
+                <span className={tab.phase2 ? 'text-gray-400' : ''}>{tab.label}</span>
+                {tab.phase2 && (
+                  <Badge className="ml-1.5 text-[10px] bg-gray-200 text-gray-500 hover:bg-gray-200 px-1 py-0">
+                    준비중
+                  </Badge>
+                )}
+                {!tab.phase2 && (
+                  <span
+                    className={cn(
+                      'ml-1.5 text-xs rounded-full px-1.5 py-0.5',
+                      activeTab === tab.value
+                        ? 'bg-blue-100 text-blue-600'
+                        : 'bg-gray-100 text-gray-500'
+                    )}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* 상단 액션 */}
@@ -164,18 +224,11 @@ function OrdersContent() {
                 variant="default"
                 size="sm"
                 disabled={selectedIds.size === 0}
+                onClick={moveToNextStatus}
               >
                 {ORDER_STATUS_LABELS[currentNextStatus]}으로 이동 →
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-red-600 border-red-200 hover:bg-red-50"
-              disabled={selectedIds.size === 0}
-            >
-              주문취소
-            </Button>
             {activeTab === 'received' && (
               <Button
                 size="sm"
@@ -189,7 +242,7 @@ function OrdersContent() {
                         open: true,
                         order: firstOrder,
                         actualQty: String(firstOrder.orderQty),
-                        inboundDate: new Date().toISOString().split('T')[0],
+                        inboundDate: '2026-03-02',
                       });
                     }
                   }
@@ -198,6 +251,15 @@ function OrdersContent() {
                 입고처리
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-red-600 border-red-200 hover:bg-red-50"
+              disabled={selectedIds.size === 0}
+              onClick={cancelOrders}
+            >
+              주문취소
+            </Button>
           </div>
         </div>
 
@@ -209,30 +271,43 @@ function OrdersContent() {
                 <th className="px-3 py-3 text-center w-10">
                   <input
                     type="checkbox"
-                    checked={filteredOrders.length > 0 && selectedIds.size === filteredOrders.length}
+                    checked={
+                      filteredOrders.length > 0 &&
+                      selectedIds.size === filteredOrders.length
+                    }
                     onChange={toggleSelectAll}
                     className="rounded"
                   />
                 </th>
                 <th className="px-3 py-3 text-center whitespace-nowrap">NO</th>
                 <th className="px-3 py-3 text-left whitespace-nowrap">구매요청일</th>
-                <th className="px-3 py-3 text-left whitespace-nowrap">상품명</th>
+                <th className="px-3 py-3 text-left whitespace-nowrap">현재상태</th>
+                <th className="px-3 py-3 text-left whitespace-nowrap">발주번호</th>
+                <th className="px-3 py-3 text-left whitespace-nowrap">스토어</th>
+                <th className="px-3 py-3 text-left whitespace-nowrap">판매방식</th>
+                <th className="px-3 py-3 text-center whitespace-nowrap">이미지</th>
+                <th className="px-3 py-3 text-left whitespace-nowrap min-w-[160px]">상품명</th>
+                <th className="px-3 py-3 text-left whitespace-nowrap">바코드</th>
+                <th className="px-3 py-3 text-center whitespace-nowrap">링크</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">발주량</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">단가</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">총액</th>
-                <th className="px-3 py-3 text-center whitespace-nowrap">현재상태</th>
                 <th className="px-3 py-3 text-center whitespace-nowrap">공장출고예정일</th>
                 <th className="px-3 py-3 text-center whitespace-nowrap">재고도착예정일</th>
                 <th className="px-3 py-3 text-left whitespace-nowrap">트래킹번호</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">관부가세</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">국내운임비</th>
-                <th className="px-3 py-3 text-left whitespace-nowrap">메모</th>
+                <th className="px-3 py-3 text-right whitespace-nowrap">중국내운임비</th>
+                <th className="px-3 py-3 text-left whitespace-nowrap min-w-[120px]">메모</th>
               </tr>
             </thead>
             <tbody>
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="px-4 py-12 text-center text-gray-400 text-sm">
+                  <td
+                    colSpan={21}
+                    className="px-4 py-12 text-center text-gray-400 text-sm"
+                  >
                     해당 탭에 주문 내역이 없습니다.
                   </td>
                 </tr>
@@ -254,19 +329,70 @@ function OrdersContent() {
                       />
                     </td>
                     <td className="px-3 py-2.5 text-center text-gray-500">{idx + 1}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{order.requestDate}</td>
-                    <td className="px-3 py-2.5 font-medium whitespace-nowrap">{order.productName}</td>
-                    <td className="px-3 py-2.5 text-right whitespace-nowrap">{order.orderQty.toLocaleString()}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-gray-600 text-xs">
+                      {order.requestDate}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <Badge className={cn('text-xs', getStatusBadge(order.status))}>
+                        {ORDER_STATUS_LABELS[order.status]}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-500 font-mono">
+                      {order.orderNo}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-600">
+                      {order.store}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          'text-xs',
+                          order.salesType === '로켓'
+                            ? 'border-blue-300 text-blue-700'
+                            : order.salesType === '그로스'
+                            ? 'border-green-300 text-green-700'
+                            : 'border-gray-300 text-gray-600'
+                        )}
+                      >
+                        {order.salesType}
+                      </Badge>
+                    </td>
+                    {/* 이미지 */}
+                    <td className="px-3 py-2.5 text-center">
+                      <div className="w-10 h-10 bg-gray-100 rounded border border-gray-200 flex items-center justify-center mx-auto">
+                        <span className="text-[9px] text-gray-400">이미지</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 font-medium">
+                      <div className="max-w-[200px]">{order.productName}</div>
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-400 font-mono">
+                      {order.barcode || '-'}
+                    </td>
+                    {/* 상품링크 */}
+                    <td className="px-3 py-2.5 text-center">
+                      {order.productLink ? (
+                        <a
+                          href={order.productLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-500 hover:text-blue-700"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 mx-auto" />
+                        </a>
+                      ) : (
+                        <span className="text-gray-300 text-xs">-</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      {order.orderQty.toLocaleString()}
+                    </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600">
                       {order.unitPrice.toLocaleString()}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap font-medium">
                       {order.totalAmount.toLocaleString()}
-                    </td>
-                    <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                      <Badge className={cn('text-xs', getStatusBadge(order.status))}>
-                        {ORDER_STATUS_LABELS[order.status]}
-                      </Badge>
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap text-gray-500 text-xs">
                       {order.expectedShipDate || '-'}
@@ -281,7 +407,12 @@ function OrdersContent() {
                       {order.customsTax > 0 ? order.customsTax.toLocaleString() : '-'}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600 text-xs">
-                      {order.domesticShipping > 0 ? order.domesticShipping.toLocaleString() : '-'}
+                      {order.domesticShipping > 0
+                        ? order.domesticShipping.toLocaleString()
+                        : '-'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600 text-xs">
+                      {order.chinaFreight > 0 ? order.chinaFreight.toLocaleString() : '-'}
                     </td>
                     <td className="px-3 py-2.5 text-gray-500 text-xs max-w-[160px] truncate">
                       {order.memo || '-'}
@@ -308,14 +439,18 @@ function OrdersContent() {
               <div className="text-sm text-gray-500">{inboundDialog.order.productName}</div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">발주량</span>
-                <span className="font-semibold">{inboundDialog.order.orderQty.toLocaleString()}개</span>
+                <span className="font-semibold">
+                  {inboundDialog.order.orderQty.toLocaleString()}개
+                </span>
               </div>
               <div className="space-y-1.5">
                 <Label>실수량</Label>
                 <Input
                   type="number"
                   value={inboundDialog.actualQty}
-                  onChange={(e) => setInboundDialog((prev) => ({ ...prev, actualQty: e.target.value }))}
+                  onChange={(e) =>
+                    setInboundDialog((prev) => ({ ...prev, actualQty: e.target.value }))
+                  }
                   placeholder="실제 수령 수량"
                 />
               </div>
@@ -324,18 +459,25 @@ function OrdersContent() {
                 <Input
                   type="date"
                   value={inboundDialog.inboundDate}
-                  onChange={(e) => setInboundDialog((prev) => ({ ...prev, inboundDate: e.target.value }))}
+                  onChange={(e) =>
+                    setInboundDialog((prev) => ({ ...prev, inboundDate: e.target.value }))
+                  }
                 />
               </div>
-              {inboundDialog.actualQty && inboundDialog.order.orderQty !== Number(inboundDialog.actualQty) && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
-                  발주량({inboundDialog.order.orderQty})과 실수량({inboundDialog.actualQty})이 다릅니다.
-                </div>
-              )}
+              {inboundDialog.actualQty &&
+                inboundDialog.order.orderQty !== Number(inboundDialog.actualQty) && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+                    발주량({inboundDialog.order.orderQty})과 실수량(
+                    {inboundDialog.actualQty})이 다릅니다.
+                  </div>
+                )}
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setInboundDialog((prev) => ({ ...prev, open: false }))}>
+            <Button
+              variant="outline"
+              onClick={() => setInboundDialog((prev) => ({ ...prev, open: false }))}
+            >
               취소
             </Button>
             <Button

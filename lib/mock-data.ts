@@ -21,9 +21,13 @@ export interface CostHistory {
 export interface Product {
   id: string;
   alias: string;
+  productId: string;
+  optionCode: string;
+  barcode: string;
   name: string;
   option: string;
   price: number;
+  discountPrice: number;
   currentCost: number;
   costHistory: CostHistory[];
   shippingFee: number;
@@ -36,22 +40,32 @@ export interface Product {
 
 export interface DailyInventoryItem {
   id: string;
+  alias: string;
+  productId: string;
   productName: string;
   option: string;
   netProfit: number;
   inventoryValue: number;
   monthSales: number;
   daySales: number;
+  adSales: number;
+  naturalSales: number;
+  adSpend: number;
   marketStock: number;
   domesticStock: number;
   dailyTarget: number;
-  recommendInbound: number;
   inboundInProgress: number;
   children?: DailyInventoryItem[];
 }
 
 export interface InventoryOrder {
   id: string;
+  orderNo: string;
+  store: string;
+  salesType: string;
+  image: string;
+  barcode: string;
+  productLink: string;
   requestDate: string;
   productName: string;
   orderQty: number;
@@ -63,6 +77,7 @@ export interface InventoryOrder {
   trackingNumber: string;
   customsTax: number;
   domesticShipping: number;
+  chinaFreight: number;
   memo: string;
 }
 
@@ -81,9 +96,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p1',
     alias: '스포츠양말B',
+    productId: 'C-10234567',
+    optionCode: 'OPT-001-BK-M',
+    barcode: '8801234567890',
     name: '프리미엄 스포츠양말',
     option: '블랙 M',
     price: 12000,
+    discountPrice: 10800,
     currentCost: 3500,
     costHistory: [
       { date: '2024-01-15', cost: 3200 },
@@ -99,9 +118,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p2',
     alias: '스포츠양말B',
+    productId: 'C-10234567',
+    optionCode: 'OPT-001-BK-L',
+    barcode: '8801234567891',
     name: '프리미엄 스포츠양말',
     option: '블랙 L',
     price: 12000,
+    discountPrice: 10800,
     currentCost: 3500,
     costHistory: [
       { date: '2024-01-15', cost: 3200 },
@@ -117,9 +140,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p3',
     alias: '런닝화A',
+    productId: 'C-20345678',
+    optionCode: 'OPT-002-RN-230',
+    barcode: '8802345678901',
     name: '경량 런닝화',
     option: '230',
     price: 65000,
+    discountPrice: 59000,
     currentCost: 22000,
     costHistory: [
       { date: '2023-11-01', cost: 20000 },
@@ -135,9 +162,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p4',
     alias: '런닝화A',
+    productId: 'C-20345678',
+    optionCode: 'OPT-002-RN-240',
+    barcode: '8802345678902',
     name: '경량 런닝화',
     option: '240',
     price: 65000,
+    discountPrice: 59000,
     currentCost: 22000,
     costHistory: [
       { date: '2023-11-01', cost: 20000 },
@@ -153,9 +184,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p5',
     alias: '런닝화A',
+    productId: 'C-20345678',
+    optionCode: 'OPT-002-RN-250',
+    barcode: '8802345678903',
     name: '경량 런닝화',
     option: '250',
     price: 65000,
+    discountPrice: 59000,
     currentCost: 22000,
     costHistory: [
       { date: '2023-11-01', cost: 20000 },
@@ -171,9 +206,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p6',
     alias: '기능성티',
+    productId: 'C-30456789',
+    optionCode: 'OPT-003-FT-S',
+    barcode: '8803456789012',
     name: '기능성 티셔츠',
     option: 'S',
     price: 28000,
+    discountPrice: 25200,
     currentCost: 8500,
     costHistory: [
       { date: '2024-02-01', cost: 8000 },
@@ -189,9 +228,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p7',
     alias: '기능성티',
+    productId: 'C-30456789',
+    optionCode: 'OPT-003-FT-M',
+    barcode: '8803456789013',
     name: '기능성 티셔츠',
     option: 'M',
     price: 28000,
+    discountPrice: 25200,
     currentCost: 8500,
     costHistory: [
       { date: '2024-02-01', cost: 8000 },
@@ -207,9 +250,13 @@ export const mockProducts: Product[] = [
   {
     id: 'p8',
     alias: '기능성티',
+    productId: 'C-30456789',
+    optionCode: 'OPT-003-FT-L',
+    barcode: '8803456789014',
     name: '기능성 티셔츠',
     option: 'L',
     price: 28000,
+    discountPrice: 25200,
     currentCost: 8500,
     costHistory: [
       { date: '2024-02-01', cost: 8000 },
@@ -229,160 +276,204 @@ export const mockProducts: Product[] = [
 export const mockDailyInventory: DailyInventoryItem[] = [
   {
     id: 'di1',
+    alias: '스포츠양말B',
+    productId: 'C-10234567',
     productName: '프리미엄 스포츠양말',
     option: '전체',
     netProfit: 4820000,
     inventoryValue: 6020000,
     monthSales: 620,
     daySales: 24,
+    adSales: 0,
+    naturalSales: 0,
+    adSpend: 0,
     marketStock: 127,
     domesticStock: 500,
     dailyTarget: 30,
-    recommendInbound: 90,
     inboundInProgress: 200,
     children: [
       {
         id: 'di1-1',
+        alias: '스포츠양말B',
+        productId: 'C-10234567',
         productName: '프리미엄 스포츠양말',
         option: '블랙 M',
         netProfit: 2980000,
         inventoryValue: 3680000,
         monthSales: 380,
         daySales: 15,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 85,
         domesticStock: 320,
         dailyTarget: 18,
-        recommendInbound: 54,
         inboundInProgress: 120,
       },
       {
         id: 'di1-2',
+        alias: '스포츠양말B',
+        productId: 'C-10234567',
         productName: '프리미엄 스포츠양말',
         option: '블랙 L',
         netProfit: 1840000,
         inventoryValue: 2340000,
         monthSales: 240,
         daySales: 9,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 42,
         domesticStock: 180,
         dailyTarget: 12,
-        recommendInbound: 36,
         inboundInProgress: 80,
       },
     ],
   },
   {
     id: 'di2',
+    alias: '런닝화A',
+    productId: 'C-20345678',
     productName: '경량 런닝화',
     option: '전체',
     netProfit: 8650000,
     inventoryValue: 18600000,
     monthSales: 218,
     daySales: 8,
+    adSales: 0,
+    naturalSales: 0,
+    adSpend: 0,
     marketStock: 51,
     domesticStock: 285,
     dailyTarget: 10,
-    recommendInbound: 30,
     inboundInProgress: 0,
     children: [
       {
         id: 'di2-1',
+        alias: '런닝화A',
+        productId: 'C-20345678',
         productName: '경량 런닝화',
         option: '230',
         netProfit: 2100000,
         inventoryValue: 4320000,
         monthSales: 52,
         daySales: 2,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 15,
         domesticStock: 90,
         dailyTarget: 3,
-        recommendInbound: 15,
         inboundInProgress: 0,
       },
       {
         id: 'di2-2',
+        alias: '런닝화A',
+        productId: 'C-20345678',
         productName: '경량 런닝화',
         option: '240',
         netProfit: 3850000,
         inventoryValue: 8640000,
         monthSales: 96,
         daySales: 4,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 28,
         domesticStock: 140,
         dailyTarget: 4,
-        recommendInbound: 0,
         inboundInProgress: 0,
       },
       {
         id: 'di2-3',
+        alias: '런닝화A',
+        productId: 'C-20345678',
         productName: '경량 런닝화',
         option: '250',
         netProfit: 2700000,
         inventoryValue: 5640000,
         monthSales: 70,
         daySales: 2,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 8,
         domesticStock: 55,
         dailyTarget: 3,
-        recommendInbound: 15,
         inboundInProgress: 0,
       },
     ],
   },
   {
     id: 'di3',
+    alias: '기능성티',
+    productId: 'C-30456789',
     productName: '기능성 티셔츠',
     option: '전체',
     netProfit: 2990000,
     inventoryValue: 17340000,
     monthSales: 175,
     daySales: 7,
+    adSales: 0,
+    naturalSales: 0,
+    adSpend: 0,
     marketStock: 195,
     domesticStock: 650,
     dailyTarget: 8,
-    recommendInbound: 0,
     inboundInProgress: 300,
     children: [
       {
         id: 'di3-1',
+        alias: '기능성티',
+        productId: 'C-30456789',
         productName: '기능성 티셔츠',
         option: 'S',
         netProfit: 850000,
         inventoryValue: 5185000,
         monthSales: 50,
         daySales: 2,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 62,
         domesticStock: 210,
         dailyTarget: 2,
-        recommendInbound: 0,
         inboundInProgress: 100,
       },
       {
         id: 'di3-2',
+        alias: '기능성티',
+        productId: 'C-30456789',
         productName: '기능성 티셔츠',
         option: 'M',
         netProfit: 1360000,
         inventoryValue: 6885000,
         monthSales: 80,
         daySales: 3,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 95,
         domesticStock: 285,
         dailyTarget: 4,
-        recommendInbound: 0,
         inboundInProgress: 120,
       },
       {
         id: 'di3-3',
+        alias: '기능성티',
+        productId: 'C-30456789',
         productName: '기능성 티셔츠',
         option: 'L',
         netProfit: 780000,
         inventoryValue: 5270000,
         monthSales: 45,
         daySales: 2,
+        adSales: 0,
+        naturalSales: 0,
+        adSpend: 0,
         marketStock: 38,
         domesticStock: 155,
         dailyTarget: 2,
-        recommendInbound: 0,
         inboundInProgress: 80,
       },
     ],
@@ -394,6 +485,12 @@ export const mockDailyInventory: DailyInventoryItem[] = [
 export const mockInventoryOrders: InventoryOrder[] = [
   {
     id: 'o1',
+    orderNo: 'PO-2026-0301',
+    store: '쿠팡',
+    salesType: '그로스',
+    image: '',
+    barcode: '8801234567890',
+    productLink: 'https://www.coupang.com/vp/products/123456789',
     requestDate: '2026-03-01',
     productName: '프리미엄 스포츠양말 (블랙 M)',
     orderQty: 500,
@@ -405,10 +502,17 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: '',
     customsTax: 0,
     domesticShipping: 0,
+    chinaFreight: 0,
     memo: '월말 재고 부족 예상',
   },
   {
     id: 'o2',
+    orderNo: 'PO-2026-0302',
+    store: '쿠팡',
+    salesType: '그로스',
+    image: '',
+    barcode: '8802345678903',
+    productLink: 'https://www.coupang.com/vp/products/234567890',
     requestDate: '2026-03-01',
     productName: '경량 런닝화 (250)',
     orderQty: 100,
@@ -420,10 +524,17 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: '',
     customsTax: 0,
     domesticShipping: 0,
+    chinaFreight: 0,
     memo: '빠른 소진 예상',
   },
   {
     id: 'o3',
+    orderNo: 'PO-2026-0215',
+    store: '쿠팡',
+    salesType: '로켓',
+    image: '',
+    barcode: '8803456789012',
+    productLink: 'https://www.coupang.com/vp/products/345678901',
     requestDate: '2026-02-15',
     productName: '기능성 티셔츠 (S, M, L)',
     orderQty: 600,
@@ -435,10 +546,17 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: '',
     customsTax: 280000,
     domesticShipping: 150000,
+    chinaFreight: 80000,
     memo: '',
   },
   {
     id: 'o4',
+    orderNo: 'PO-2026-0210',
+    store: '쿠팡',
+    salesType: '그로스',
+    image: '',
+    barcode: '8801234567891',
+    productLink: 'https://www.coupang.com/vp/products/123456789',
     requestDate: '2026-02-10',
     productName: '프리미엄 스포츠양말 (블랙 L)',
     orderQty: 400,
@@ -450,10 +568,17 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: 'SH2024031001',
     customsTax: 70000,
     domesticShipping: 80000,
+    chinaFreight: 45000,
     memo: '긴급 주문',
   },
   {
     id: 'o5',
+    orderNo: 'PO-2026-0205',
+    store: '쿠팡',
+    salesType: '그로스',
+    image: '',
+    barcode: '8802345678901',
+    productLink: 'https://www.coupang.com/vp/products/234567890',
     requestDate: '2026-02-05',
     productName: '경량 런닝화 (230, 240)',
     orderQty: 200,
@@ -465,10 +590,17 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: 'CN2024022801',
     customsTax: 350000,
     domesticShipping: 200000,
+    chinaFreight: 120000,
     memo: '',
   },
   {
     id: 'o6',
+    orderNo: 'PO-2026-0125',
+    store: '쿠팡',
+    salesType: '로켓',
+    image: '',
+    barcode: '8803456789013',
+    productLink: 'https://www.coupang.com/vp/products/345678901',
     requestDate: '2026-01-25',
     productName: '기능성 티셔츠 (M)',
     orderQty: 300,
@@ -480,10 +612,17 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: 'CN2024022001',
     customsTax: 140000,
     domesticShipping: 100000,
+    chinaFreight: 65000,
     memo: '선박 운송',
   },
   {
     id: 'o7',
+    orderNo: 'PO-2026-0115',
+    store: '쿠팡',
+    salesType: '그로스',
+    image: '',
+    barcode: '8801234567890',
+    productLink: 'https://www.coupang.com/vp/products/123456789',
     requestDate: '2026-01-15',
     productName: '프리미엄 스포츠양말 (블랙 M, L)',
     orderQty: 600,
@@ -495,10 +634,17 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: 'KR2024030101',
     customsTax: 105000,
     domesticShipping: 120000,
+    chinaFreight: 70000,
     memo: '',
   },
   {
     id: 'o8',
+    orderNo: 'PO-2026-0105',
+    store: '쿠팡',
+    salesType: '그로스',
+    image: '',
+    barcode: '8802345678902',
+    productLink: 'https://www.coupang.com/vp/products/234567890',
     requestDate: '2026-01-05',
     productName: '경량 런닝화 (240, 250)',
     orderQty: 150,
@@ -510,6 +656,7 @@ export const mockInventoryOrders: InventoryOrder[] = [
     trackingNumber: 'KR2024021501',
     customsTax: 260000,
     domesticShipping: 150000,
+    chinaFreight: 90000,
     memo: '입고 완료 확인 필요',
   },
 ];
@@ -587,3 +734,14 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   received: '상품수령완료',
   all: '전체',
 };
+
+// 활성화된 상태 흐름 (Phase2 탭 제외)
+export const ENABLED_STATUS_FLOW: OrderStatus[] = [
+  'recommend',
+  'purchase_confirmed',
+  'purchase_complete',
+  'china_arrived',
+  'china_shipped',
+  'korea_arrived',
+  'received',
+];
