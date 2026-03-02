@@ -2,29 +2,49 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, Warehouse, ShoppingCart, Crown } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Package,
+  Warehouse,
+  ShoppingCart,
+  Crown,
+  BarChart2,
+  History,
+  Target,
+  Calculator,
+  Send,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const navItems = [
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+type NavGroup = {
+  label?: string;
+  items: NavItem[];
+};
+
+const navGroups: NavGroup[] = [
   {
-    href: '/dashboard',
-    label: '대시보드',
-    icon: LayoutDashboard,
+    items: [
+      { href: '/dashboard', label: '대시보드', icon: LayoutDashboard },
+      { href: '/products', label: '상품관리', icon: Package },
+    ],
   },
   {
-    href: '/products',
-    label: '상품관리',
-    icon: Package,
-  },
-  {
-    href: '/inventory/daily',
-    label: '재고관리(일일)',
-    icon: Warehouse,
-  },
-  {
-    href: '/inventory/orders',
-    label: '재고관리(주문)',
-    icon: ShoppingCart,
+    label: '재고관리',
+    items: [
+      { href: '/inventory/daily', label: '재고관리(일일)', icon: Warehouse },
+      { href: '/inventory/orders', label: '재고관리(주문)', icon: ShoppingCart },
+      { href: '/inventory/status', label: '재고 현황', icon: BarChart2 },
+      { href: '/inventory/history', label: '입고 이력', icon: History },
+      { href: '/inventory/goal', label: '월 목표 설정', icon: Target },
+      { href: '/inventory/lcl-calc', label: 'LCL 계산기', icon: Calculator },
+      { href: '/inventory/market-send', label: '마켓재고 발송', icon: Send },
+    ],
   },
 ];
 
@@ -40,24 +60,38 @@ export default function Sidebar() {
       </div>
 
       {/* 네비게이션 */}
-      <nav className="flex-1 py-4">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-3 px-5 py-3 text-sm transition-colors hover:bg-gray-700',
-                isActive ? 'bg-gray-700 text-white font-medium border-l-2 border-blue-500' : 'text-gray-400'
-              )}
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              {item.label}
-            </Link>
-          );
-        })}
+      <nav className="flex-1 py-4 overflow-y-auto">
+        {navGroups.map((group, gIdx) => (
+          <div key={gIdx}>
+            {gIdx > 0 && <div className="mx-5 my-2 border-t border-gray-700" />}
+            {group.label && (
+              <div className="px-5 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                {group.label}
+              </div>
+            )}
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              const isActive =
+                pathname === item.href ||
+                (item.href !== '/dashboard' && pathname.startsWith(item.href));
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    'flex items-center gap-3 px-5 py-2.5 text-sm transition-colors hover:bg-gray-700',
+                    isActive
+                      ? 'bg-gray-700 text-white font-medium border-l-2 border-blue-500'
+                      : 'text-gray-400'
+                  )}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* 하단 */}

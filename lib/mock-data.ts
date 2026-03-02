@@ -697,6 +697,26 @@ export const mockCalendarData: CalendarDay[] = [
   { date: 31, recommendInbound: 0, stockOrder: 1, inboundInProgress: 1, sales: 4080000, netProfit: 1490000 },
 ];
 
+// ===== 재고 현황/이력/목표/마켓발송 공통 상품 타입 =====
+
+export interface InventoryProduct {
+  id: string;
+  name: string;
+  totalStock: number;      // 국내총재고
+  grossStock: number;      // 마켓재고(그로스)
+  rocketStock: number;     // 마켓재고(로켓)
+  monthlyTarget: number;   // 월목표
+  dailyAvgSales: number;   // 일평균판매
+}
+
+export const mockInventoryProducts: InventoryProduct[] = [
+  { id: 'ip1', name: '프리미엄 스포츠양말 (블랙 M)', totalStock: 1200, grossStock: 180, rocketStock: 0, monthlyTarget: 600, dailyAvgSales: 20 },
+  { id: 'ip2', name: '경량 런닝화 (250)', totalStock: 85, grossStock: 45, rocketStock: 0, monthlyTarget: 90, dailyAvgSales: 3 },
+  { id: 'ip3', name: '메쉬 스포츠양말 세트', totalStock: 320, grossStock: 95, rocketStock: 30, monthlyTarget: 300, dailyAvgSales: 10 },
+  { id: 'ip4', name: '압박 무릎보호대 (L)', totalStock: 15, grossStock: 12, rocketStock: 0, monthlyTarget: 60, dailyAvgSales: 2 },
+  { id: 'ip5', name: '쿨링 운동장갑', totalStock: 0, grossStock: 0, rocketStock: 0, monthlyTarget: 120, dailyAvgSales: 4 },
+];
+
 // ===== 유틸 함수 =====
 
 export function calcMargin(price: number, cost: number, shippingFee: number): number {
