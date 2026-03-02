@@ -11,118 +11,74 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { mockInventoryProducts } from '@/lib/mock-data';
+import { productsApi, inventoryApi } from '@/lib/api';
+import type { Product, InventoryHistory } from '@/lib/supabase/types';
 import { Plus, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface InboundRecord {
-  id: string;
-  productId: string;
-  date: string;
-  quantity: number;
-  unitPrice: number;
-  shippingFee: number;
-  customsTax: number;
-  actualCostPerUnit: number;
-  memo: string;
-}
-
 interface DialogState {
   open: boolean;
-  date: string;
   quantity: string;
-  unitPrice: string;
-  shippingFee: string;
-  customsTax: string;
   memo: string;
 }
 
-const STORAGE_KEY = 'sellerking_inbound_history';
-
 export default function InboundHistoryPage() {
-  const products = mockInventoryProducts;
-  const [selectedId, setSelectedId] = useState<string>(products[0].id);
-  const [history, setHistory] = useState<InboundRecord[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [history, setHistory] = useState<InventoryHistory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string>('');
   const [dialog, setDialog] = useState<DialogState>({
     open: false,
-    date: '2026-03-02',
     quantity: '',
-    unitPrice: '',
-    shippingFee: '',
-    customsTax: '',
     memo: '',
   });
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setHistory(JSON.parse(stored));
-    } catch {
-      // ignore
+    async function load() {
+      setLoading(true);
+      const [prodRes, histRes] = await Promise.all([
+        productsApi.list(),
+        inventoryApi.getHistory(),
+      ]);
+      if (prodRes.error) {
+        setError(prodRes.error.message);
+        setLoading(false);
+        return;
+      }
+      const prods = prodRes.data ?? [];
+      setProducts(prods);
+      if (prods.length > 0) setSelectedId(prods[0].id);
+      setHistory(histRes.data ?? []);
+      setLoading(false);
     }
+    load();
   }, []);
 
+  if (loading) return <div className="p-8 text-center text-gray-500">로딩 중...</div>;
+  if (error) return <div className="p-8 text-red-500">{error}</div>;
+
   const selectedProduct = products.find((p) => p.id === selectedId);
-  const filteredHistory = history.filter((r) => r.productId === selectedId);
+  const filteredHistory = history.filter((r) => r.product_id === selectedId);
 
-  function calcActualCost(
-    qty: number,
-    unitPrice: number,
-    shippingFee: number,
-    customsTax: number
-  ): number {
-    if (qty === 0) return 0;
-    return Math.round(unitPrice + (shippingFee + customsTax) / qty);
-  }
-
-  function handleSave() {
+  async function handleSave() {
     const qty = Number(dialog.quantity);
-    const unitPrice = Number(dialog.unitPrice);
-    const shippingFee = Number(dialog.shippingFee) || 0;
-    const customsTax = Number(dialog.customsTax) || 0;
+    if (!qty) return;
 
-    if (!qty || !unitPrice) return;
-
-    const newRecord: InboundRecord = {
-      id: `ih_${Date.now()}`,
-      productId: selectedId,
-      date: dialog.date,
+    await inventoryApi.addHistory({
+      product_id: selectedId,
+      product_name: selectedProduct?.name ?? null,
+      change_type: 'inbound',
       quantity: qty,
-      unitPrice,
-      shippingFee,
-      customsTax,
-      actualCostPerUnit: calcActualCost(qty, unitPrice, shippingFee, customsTax),
-      memo: dialog.memo,
-    };
+      note: dialog.memo || null,
+    });
 
-    const updated = [newRecord, ...history];
-    setHistory(updated);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+    // 이력 재로드
+    const histRes = await inventoryApi.getHistory();
+    setHistory(histRes.data ?? []);
 
-    setDialog((prev) => ({
-      ...prev,
-      open: false,
-      quantity: '',
-      unitPrice: '',
-      shippingFee: '',
-      customsTax: '',
-      memo: '',
-    }));
+    setDialog({ open: false, quantity: '', memo: '' });
   }
-
-  const previewActualCost =
-    dialog.quantity && dialog.unitPrice
-      ? calcActualCost(
-          Number(dialog.quantity),
-          Number(dialog.unitPrice),
-          Number(dialog.shippingFee) || 0,
-          Number(dialog.customsTax) || 0
-        )
-      : null;
 
   return (
     <div className="space-y-4">
@@ -142,7 +98,7 @@ export default function InboundHistoryPage() {
             </div>
             <div className="divide-y">
               {products.map((product) => {
-                const count = history.filter((r) => r.productId === product.id).length;
+                const count = history.filter((r) => r.product_id === product.id).length;
                 return (
                   <button
                     key={product.id}
@@ -200,43 +156,24 @@ export default function InboundHistoryPage() {
                         <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-semibold text-gray-900">
-                              {record.date}
+                              {record.created_at.split('T')[0]}
                             </span>
                             <span className="text-xs text-gray-500">
                               {record.quantity.toLocaleString()}개 입고
                             </span>
                           </div>
-                          <div className="grid grid-cols-3 gap-3 text-xs">
+                          <div className="flex items-center gap-4 text-xs">
                             <div>
-                              <div className="text-gray-400">단가</div>
-                              <div className="font-medium text-gray-700">
-                                {record.unitPrice.toLocaleString()}원
-                              </div>
+                              <div className="text-gray-400">유형</div>
+                              <div className="font-medium text-gray-700">{record.change_type}</div>
                             </div>
-                            <div>
-                              <div className="text-gray-400">배송비배분</div>
-                              <div className="font-medium text-gray-700">
-                                {record.shippingFee.toLocaleString()}원
+                            {record.note && (
+                              <div>
+                                <div className="text-gray-400">메모</div>
+                                <div className="font-medium text-gray-700">{record.note}</div>
                               </div>
-                            </div>
-                            <div>
-                              <div className="text-gray-400">관부가세배분</div>
-                              <div className="font-medium text-gray-700">
-                                {record.customsTax.toLocaleString()}원
-                              </div>
-                            </div>
+                            )}
                           </div>
-                          <div className="mt-2 pt-2 border-t border-gray-200 flex items-center justify-between">
-                            <span className="text-xs text-gray-400">개당 실원가</span>
-                            <span className="text-sm font-bold text-blue-600">
-                              {record.actualCostPerUnit.toLocaleString()}원
-                            </span>
-                          </div>
-                          {record.memo && (
-                            <div className="mt-1.5 text-xs text-gray-500 italic">
-                              &ldquo;{record.memo}&rdquo;
-                            </div>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -261,68 +198,15 @@ export default function InboundHistoryPage() {
             <div className="text-sm text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
               {selectedProduct?.name}
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5 col-span-2">
-                <Label>입고일</Label>
-                <Input
-                  type="date"
-                  value={dialog.date}
-                  onChange={(e) => setDialog((prev) => ({ ...prev, date: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>입고 수량</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={dialog.quantity}
-                  onChange={(e) =>
-                    setDialog((prev) => ({ ...prev, quantity: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>단가 (원)</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={dialog.unitPrice}
-                  onChange={(e) =>
-                    setDialog((prev) => ({ ...prev, unitPrice: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>배송비 배분 (원)</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={dialog.shippingFee}
-                  onChange={(e) =>
-                    setDialog((prev) => ({ ...prev, shippingFee: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>관부가세 배분 (원)</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={dialog.customsTax}
-                  onChange={(e) =>
-                    setDialog((prev) => ({ ...prev, customsTax: e.target.value }))
-                  }
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label>입고 수량</Label>
+              <Input
+                type="number"
+                placeholder="0"
+                value={dialog.quantity}
+                onChange={(e) => setDialog((prev) => ({ ...prev, quantity: e.target.value }))}
+              />
             </div>
-            {previewActualCost !== null && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
-                <span className="text-sm text-blue-700">개당 실제원가 (자동계산)</span>
-                <span className="text-lg font-bold text-blue-600">
-                  {previewActualCost.toLocaleString()}원
-                </span>
-              </div>
-            )}
             <div className="space-y-1.5">
               <Label>메모</Label>
               <Input
@@ -339,7 +223,7 @@ export default function InboundHistoryPage() {
             >
               취소
             </Button>
-            <Button onClick={handleSave} disabled={!dialog.quantity || !dialog.unitPrice}>
+            <Button onClick={handleSave} disabled={!dialog.quantity}>
               입고 완료
             </Button>
           </DialogFooter>

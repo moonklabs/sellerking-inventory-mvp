@@ -3,31 +3,24 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { mockInventoryProducts } from '@/lib/mock-data';
+import { inventoryApi } from '@/lib/api';
+import type { MarketSendHistory } from '@/lib/supabase/types';
 import { Truck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const STOCK_KEY = 'sellerking_market_stocks';
-const HISTORY_KEY = 'sellerking_dispatch_history';
-
-interface StockState {
-  [productId: string]: {
-    totalStock: number;
-    grossStock: number;
-    rocketStock: number;
-  };
-}
-
-interface DispatchRecord {
-  id: string;
-  date: string;
-  productId: string;
-  productName: string;
-  grossSent: number;
-  rocketSent: number;
-  totalBefore: number;
-  totalAfter: number;
-}
+type StatusItem = {
+  product_id: string;
+  alias: string;
+  name: string;
+  option: string | null;
+  market_stock: number;
+  domestic_stock: number;
+  daily_avg_sales: number;
+  monthly_target: number;
+  remaining_days: number;
+  recommended_stock: number;
+  risk_level: 'danger' | 'warning' | 'safe';
+};
 
 interface SendQty {
   gross: string;
@@ -35,58 +28,47 @@ interface SendQty {
 }
 
 export default function MarketSendPage() {
-  const products = mockInventoryProducts;
-  const [stocks, setStocks] = useState<StockState>({});
-  const [sendQty, setSendQty] = useState<Record<string, SendQty>>(() => {
-    const defaultSend: Record<string, SendQty> = {};
-    mockInventoryProducts.forEach((p) => {
-      defaultSend[p.id] = { gross: '', rocket: '' };
-    });
-    return defaultSend;
-  });
-  const [history, setHistory] = useState<DispatchRecord[]>([]);
+  const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
+  const [history, setHistory] = useState<MarketSendHistory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sendQty, setSendQty] = useState<Record<string, SendQty>>({});
 
   useEffect(() => {
-    try {
-      const storedStocks = localStorage.getItem(STOCK_KEY);
-      if (storedStocks) {
-        setStocks(JSON.parse(storedStocks));
-      } else {
-        const defaultStocks: StockState = {};
-        mockInventoryProducts.forEach((p) => {
-          defaultStocks[p.id] = {
-            totalStock: p.totalStock,
-            grossStock: p.grossStock,
-            rocketStock: p.rocketStock,
-          };
-        });
-        setStocks(defaultStocks);
+    async function load() {
+      setLoading(true);
+      const [statusRes, histRes] = await Promise.all([
+        inventoryApi.getStatus(),
+        inventoryApi.getMarketSendHistory(),
+      ]);
+      if (statusRes.error) {
+        setError(statusRes.error.message);
+        setLoading(false);
+        return;
       }
-
-      const storedHistory = localStorage.getItem(HISTORY_KEY);
-      if (storedHistory) setHistory(JSON.parse(storedHistory));
-    } catch {
-      const defaultStocks: StockState = {};
-      mockInventoryProducts.forEach((p) => {
-        defaultStocks[p.id] = {
-          totalStock: p.totalStock,
-          grossStock: p.grossStock,
-          rocketStock: p.rocketStock,
-        };
+      const items = statusRes.data ?? [];
+      setStatusItems(items);
+      const defaultSend: Record<string, SendQty> = {};
+      items.forEach((i) => {
+        defaultSend[i.product_id] = { gross: '', rocket: '' };
       });
-      setStocks(defaultStocks);
+      setSendQty(defaultSend);
+      setHistory(histRes.data ?? []);
+      setLoading(false);
     }
+    load();
   }, []);
 
+  if (loading) return <div className="p-8 text-center text-gray-500">로딩 중...</div>;
+  if (error) return <div className="p-8 text-red-500">{error}</div>;
+
   function getStock(productId: string) {
-    const product = mockInventoryProducts.find((p) => p.id === productId);
-    return (
-      stocks[productId] ?? {
-        totalStock: product?.totalStock ?? 0,
-        grossStock: product?.grossStock ?? 0,
-        rocketStock: product?.rocketStock ?? 0,
-      }
-    );
+    const item = statusItems.find((i) => i.product_id === productId);
+    return {
+      totalStock: item?.domestic_stock ?? 0,
+      grossStock: item?.market_stock ?? 0,
+      rocketStock: 0,
+    };
   }
 
   function calcAfterDispatch(productId: string): number {
@@ -96,48 +78,48 @@ export default function MarketSendPage() {
     return stock.totalStock - grossSend - rocketSend;
   }
 
-  function handleDispatch(productId: string) {
+  async function handleDispatch(productId: string) {
     const grossSend = Number(sendQty[productId]?.gross) || 0;
     const rocketSend = Number(sendQty[productId]?.rocket) || 0;
     if (grossSend === 0 && rocketSend === 0) return;
 
-    const stock = getStock(productId);
-    const productName = products.find((p) => p.id === productId)?.name ?? '';
-    const totalBefore = stock.totalStock;
-    const totalAfter = totalBefore - grossSend - rocketSend;
+    const product = statusItems.find((i) => i.product_id === productId);
+    const promises: Promise<unknown>[] = [];
 
-    const newStocks: StockState = {
-      ...stocks,
-      [productId]: {
-        totalStock: totalAfter,
-        grossStock: stock.grossStock + grossSend,
-        rocketStock: stock.rocketStock + rocketSend,
-      },
-    };
-
-    const newRecord: DispatchRecord = {
-      id: `dispatch_${Date.now()}`,
-      date: '2026-03-02',
-      productId,
-      productName,
-      grossSent: grossSend,
-      rocketSent: rocketSend,
-      totalBefore,
-      totalAfter,
-    };
-
-    const newHistory = [newRecord, ...history];
-
-    setStocks(newStocks);
-    setHistory(newHistory);
-    setSendQty((prev) => ({ ...prev, [productId]: { gross: '', rocket: '' } }));
-
-    try {
-      localStorage.setItem(STOCK_KEY, JSON.stringify(newStocks));
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory));
-    } catch {
-      // ignore
+    if (grossSend > 0) {
+      promises.push(
+        inventoryApi.addMarketSend({
+          product_id: productId,
+          product_name: product?.name ?? null,
+          market_type: 'growth',
+          quantity: grossSend,
+          send_date: '2026-03-02',
+          status: 'complete',
+        })
+      );
     }
+    if (rocketSend > 0) {
+      promises.push(
+        inventoryApi.addMarketSend({
+          product_id: productId,
+          product_name: product?.name ?? null,
+          market_type: 'rocket',
+          quantity: rocketSend,
+          send_date: '2026-03-02',
+          status: 'complete',
+        })
+      );
+    }
+
+    await Promise.all(promises);
+
+    const [statusRes, histRes] = await Promise.all([
+      inventoryApi.getStatus(),
+      inventoryApi.getMarketSendHistory(),
+    ]);
+    if (statusRes.data) setStatusItems(statusRes.data);
+    if (histRes.data) setHistory(histRes.data);
+    setSendQty((prev) => ({ ...prev, [productId]: { gross: '', rocket: '' } }));
   }
 
   return (
@@ -169,16 +151,16 @@ export default function MarketSendPage() {
               </tr>
             </thead>
             <tbody>
-              {products.map((product) => {
-                const stock = getStock(product.id);
-                const afterDispatch = calcAfterDispatch(product.id);
-                const grossSend = Number(sendQty[product.id]?.gross) || 0;
-                const rocketSend = Number(sendQty[product.id]?.rocket) || 0;
+              {statusItems.map((product) => {
+                const stock = getStock(product.product_id);
+                const afterDispatch = calcAfterDispatch(product.product_id);
+                const grossSend = Number(sendQty[product.product_id]?.gross) || 0;
+                const rocketSend = Number(sendQty[product.product_id]?.rocket) || 0;
                 const hasInput = grossSend > 0 || rocketSend > 0;
 
                 return (
                   <tr
-                    key={product.id}
+                    key={product.product_id}
                     className="border-b hover:bg-gray-50 transition-colors"
                   >
                     <td className="px-4 py-3 font-medium text-gray-900">{product.name}</td>
@@ -196,11 +178,14 @@ export default function MarketSendPage() {
                         type="number"
                         className="h-7 text-right text-sm w-24 ml-auto"
                         placeholder="0"
-                        value={sendQty[product.id]?.gross ?? ''}
+                        value={sendQty[product.product_id]?.gross ?? ''}
                         onChange={(e) =>
                           setSendQty((prev) => ({
                             ...prev,
-                            [product.id]: { ...prev[product.id], gross: e.target.value },
+                            [product.product_id]: {
+                              ...prev[product.product_id],
+                              gross: e.target.value,
+                            },
                           }))
                         }
                       />
@@ -210,11 +195,14 @@ export default function MarketSendPage() {
                         type="number"
                         className="h-7 text-right text-sm w-24 ml-auto"
                         placeholder="0"
-                        value={sendQty[product.id]?.rocket ?? ''}
+                        value={sendQty[product.product_id]?.rocket ?? ''}
                         onChange={(e) =>
                           setSendQty((prev) => ({
                             ...prev,
-                            [product.id]: { ...prev[product.id], rocket: e.target.value },
+                            [product.product_id]: {
+                              ...prev[product.product_id],
+                              rocket: e.target.value,
+                            },
                           }))
                         }
                       />
@@ -236,7 +224,7 @@ export default function MarketSendPage() {
                         size="sm"
                         className="h-7 text-xs"
                         disabled={!hasInput || afterDispatch < 0}
-                        onClick={() => handleDispatch(product.id)}
+                        onClick={() => handleDispatch(product.product_id)}
                       >
                         <Truck className="w-3 h-3 mr-1" />
                         발송완료
@@ -265,40 +253,34 @@ export default function MarketSendPage() {
                     <div className="absolute left-3 top-2 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-white ring-2 ring-green-200" />
                     <div className="bg-gray-50 rounded-lg p-3 border border-gray-100">
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-xs text-gray-500">{record.date}</span>
+                        <span className="text-xs text-gray-500">{record.send_date}</span>
                         <span className="text-xs font-medium text-gray-700">
-                          {record.productName}
+                          {record.product_name}
                         </span>
                       </div>
-                      <div className="grid grid-cols-4 gap-2 text-xs">
-                        {record.grossSent > 0 && (
-                          <div>
-                            <span className="text-gray-400">그로스 발송</span>
-                            <div className="font-semibold text-gray-700">
-                              {record.grossSent.toLocaleString()}개
-                            </div>
-                          </div>
-                        )}
-                        {record.rocketSent > 0 && (
-                          <div>
-                            <span className="text-gray-400">로켓 발송</span>
-                            <div className="font-semibold text-gray-700">
-                              {record.rocketSent.toLocaleString()}개
-                            </div>
-                          </div>
-                        )}
+                      <div className="grid grid-cols-3 gap-2 text-xs">
                         <div>
-                          <span className="text-gray-400">발송 전 재고</span>
+                          <span className="text-gray-400">마켓</span>
                           <div className="font-semibold text-gray-700">
-                            {record.totalBefore.toLocaleString()}
+                            {record.market_type === 'growth'
+                              ? '그로스'
+                              : record.market_type === 'rocket'
+                              ? '로켓'
+                              : record.market_type}
                           </div>
                         </div>
                         <div>
-                          <span className="text-gray-400">발송 후 재고</span>
-                          <div className="font-semibold text-green-600">
-                            {record.totalAfter.toLocaleString()}
+                          <span className="text-gray-400">발송수량</span>
+                          <div className="font-semibold text-gray-700">
+                            {record.quantity.toLocaleString()}개
                           </div>
                         </div>
+                        {record.note && (
+                          <div>
+                            <span className="text-gray-400">메모</span>
+                            <div className="font-semibold text-gray-700">{record.note}</div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

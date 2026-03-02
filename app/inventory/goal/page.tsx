@@ -3,25 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { mockInventoryProducts } from '@/lib/mock-data';
-
-interface GoalData {
-  [productId: string]: {
-    isSeason: boolean;
-    monthlyTarget: number;
-    lastUpdated: string;
-  };
-}
-
-const STORAGE_KEY = 'sellerking_monthly_goals';
-
-const LAST_MONTH_SALES: Record<string, number> = {
-  ip1: 550,
-  ip2: 80,
-  ip3: 280,
-  ip4: 45,
-  ip5: 90,
-};
+import { inventoryApi } from '@/lib/api';
+import type { InventoryGoal } from '@/lib/supabase/types';
 
 function calcRecommendedInbound(monthlyTarget: number, totalStock: number): number {
   const dailyTarget = monthlyTarget / 30;
@@ -30,95 +13,68 @@ function calcRecommendedInbound(monthlyTarget: number, totalStock: number): numb
 }
 
 export default function MonthlyGoalPage() {
-  const products = mockInventoryProducts;
-  const [goals, setGoals] = useState<GoalData>({});
+  const [goals, setGoals] = useState<InventoryGoal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [editingTargets, setEditingTargets] = useState<Record<string, string>>({});
+  const [isSeason, setIsSeason] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        setGoals(JSON.parse(stored));
-      } else {
-        const defaultGoals: GoalData = {};
-        mockInventoryProducts.forEach((p) => {
-          defaultGoals[p.id] = {
-            isSeason: true,
-            monthlyTarget: p.monthlyTarget,
-            lastUpdated: '2026-03-01',
-          };
-        });
-        setGoals(defaultGoals);
+    async function load() {
+      setLoading(true);
+      const res = await inventoryApi.getGoals();
+      if (res.error) {
+        setError(res.error.message);
+        setLoading(false);
+        return;
       }
-    } catch {
-      const defaultGoals: GoalData = {};
-      mockInventoryProducts.forEach((p) => {
-        defaultGoals[p.id] = {
-          isSeason: true,
-          monthlyTarget: p.monthlyTarget,
-          lastUpdated: '2026-03-01',
-        };
+      const data = res.data ?? [];
+      setGoals(data);
+      const targets: Record<string, string> = {};
+      const seasons: Record<string, boolean> = {};
+      data.forEach((g) => {
+        targets[g.product_id] = String(g.monthly_target);
+        seasons[g.product_id] = true;
       });
-      setGoals(defaultGoals);
+      setEditingTargets(targets);
+      setIsSeason(seasons);
+      setLoading(false);
     }
+    load();
   }, []);
 
-  useEffect(() => {
-    const targets: Record<string, string> = {};
-    mockInventoryProducts.forEach((p) => {
-      targets[p.id] = String(goals[p.id]?.monthlyTarget ?? p.monthlyTarget);
-    });
-    setEditingTargets(targets);
-  }, [goals]);
+  if (loading) return <div className="p-8 text-center text-gray-500">로딩 중...</div>;
+  if (error) return <div className="p-8 text-red-500">{error}</div>;
 
   function toggleSeason(productId: string) {
-    setGoals((prev) => ({
-      ...prev,
-      [productId]: {
-        ...prev[productId],
-        isSeason: !prev[productId]?.isSeason,
-      },
-    }));
+    setIsSeason((prev) => ({ ...prev, [productId]: !prev[productId] }));
   }
 
-  function handleSave(productId: string) {
+  async function handleSave(productId: string) {
     const target = Number(editingTargets[productId]);
     if (isNaN(target) || target < 0) return;
 
-    const updated = {
-      ...goals,
-      [productId]: {
-        ...goals[productId],
-        monthlyTarget: target,
-        lastUpdated: '2026-03-02',
-      },
-    };
-    setGoals(updated);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+    await inventoryApi.upsertGoal({
+      product_id: productId,
+      monthly_target: target,
+    });
+
+    const res = await inventoryApi.getGoals();
+    if (res.data) setGoals(res.data);
   }
 
-  function handleSaveAll() {
-    const updated = { ...goals };
-    mockInventoryProducts.forEach((p) => {
-      const target = Number(editingTargets[p.id]);
-      if (!isNaN(target) && target >= 0) {
-        updated[p.id] = {
-          ...updated[p.id],
-          monthlyTarget: target,
-          lastUpdated: '2026-03-02',
-        };
-      }
-    });
-    setGoals(updated);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+  async function handleSaveAll() {
+    await Promise.all(
+      goals.map((g) => {
+        const target = Number(editingTargets[g.product_id]);
+        if (!isNaN(target) && target >= 0) {
+          return inventoryApi.upsertGoal({ product_id: g.product_id, monthly_target: target });
+        }
+        return Promise.resolve();
+      })
+    );
+    const res = await inventoryApi.getGoals();
+    if (res.data) setGoals(res.data);
   }
 
   return (
@@ -148,44 +104,39 @@ export default function MonthlyGoalPage() {
               </tr>
             </thead>
             <tbody>
-              {products.map((product) => {
-                const goal = goals[product.id];
-                const isSeason = goal?.isSeason ?? true;
-                const monthlyTarget = Number(editingTargets[product.id]) || 0;
-                const lastUpdated = goal?.lastUpdated ?? '-';
-                const recommended = calcRecommendedInbound(
-                  monthlyTarget,
-                  product.totalStock
-                );
-                const lastMonthSales = LAST_MONTH_SALES[product.id] ?? 0;
+              {goals.map((goal) => {
+                const isSeason_val = isSeason[goal.product_id] ?? true;
+                const monthlyTarget = Number(editingTargets[goal.product_id]) || 0;
+                const lastUpdated = goal.updated_at.split('T')[0];
+                const recommended = calcRecommendedInbound(monthlyTarget, goal.total_stock);
 
                 return (
-                  <tr key={product.id} className="border-b hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 font-medium text-gray-900">{product.name}</td>
+                  <tr key={goal.product_id} className="border-b hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 font-medium text-gray-900">
+                      {goal.product_name ?? '-'}
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <button
-                        onClick={() => toggleSeason(product.id)}
+                        onClick={() => toggleSeason(goal.product_id)}
                         className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                          isSeason
+                          isSeason_val
                             ? 'bg-orange-100 text-orange-600 hover:bg-orange-200'
                             : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
                         }`}
                       >
-                        {isSeason ? '🌸 ON' : '❄️ OFF'}
+                        {isSeason_val ? '🌸 ON' : '❄️ OFF'}
                       </button>
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-600">
-                      {lastMonthSales.toLocaleString()}
-                    </td>
+                    <td className="px-4 py-3 text-right text-gray-600">-</td>
                     <td className="px-4 py-3 text-right">
                       <Input
                         type="number"
                         className="h-7 text-right text-sm w-24 ml-auto"
-                        value={editingTargets[product.id] ?? ''}
+                        value={editingTargets[goal.product_id] ?? ''}
                         onChange={(e) =>
                           setEditingTargets((prev) => ({
                             ...prev,
-                            [product.id]: e.target.value,
+                            [goal.product_id]: e.target.value,
                           }))
                         }
                       />
@@ -205,7 +156,7 @@ export default function MonthlyGoalPage() {
                         size="sm"
                         variant="outline"
                         className="h-7 text-xs"
-                        onClick={() => handleSave(product.id)}
+                        onClick={() => handleSave(goal.product_id)}
                       >
                         저장
                       </Button>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Minus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,53 +13,59 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  mockDailyInventory,
-  mockInventoryOrders,
-  DailyInventoryItem,
-  InventoryOrder,
-  formatCurrency,
-} from '@/lib/mock-data';
+import { inventoryApi } from '@/lib/api';
+import type { DailyInventory } from '@/lib/supabase/types';
 import { cn } from '@/lib/utils';
+
+type DailyInventoryWithChildren = DailyInventory & { children?: DailyInventory[] };
 
 interface OrderDialogState {
   open: boolean;
-  item: DailyInventoryItem | null;
+  item: DailyInventoryWithChildren | null;
   qty: string;
   unitPrice: string;
   memo: string;
   success: boolean;
 }
 
+function buildTree(flat: DailyInventory[]): DailyInventoryWithChildren[] {
+  const roots = flat.filter((i) => i.parent_id === null);
+  return roots.map((root) => ({
+    ...root,
+    children: flat.filter((i) => i.parent_id === root.id),
+  }));
+}
+
 // 입고권장 계산 함수 (오늘: 2026-03-02)
 function calcRecommendInbound(
-  item: DailyInventoryItem,
+  item: DailyInventoryWithChildren,
   dailyTarget: number
 ): number {
   const today = new Date('2026-03-02');
   const year = today.getFullYear();
   const month = today.getMonth() + 1;
   const dayOfMonth = today.getDate();
-  const daysInMonth = new Date(year, month, 0).getDate(); // 31
-  const daysElapsed = dayOfMonth; // 2
-  const daysRemaining = daysInMonth - dayOfMonth; // 29
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const daysElapsed = dayOfMonth;
+  const daysRemaining = daysInMonth - dayOfMonth;
 
   if (dailyTarget > 0) {
-    // 월목표수량 설정 O
     const recommended =
-      dailyTarget * daysRemaining - item.marketStock - item.inboundInProgress;
+      dailyTarget * daysRemaining - item.market_stock - item.inbound_in_progress;
     return Math.max(0, recommended);
   } else {
-    // 월목표수량 설정 X → 월판매수량 기반 추정
     if (daysElapsed === 0) return 0;
-    const dailyAvg = item.monthSales / daysElapsed;
+    const dailyAvg = item.month_sales / daysElapsed;
     const recommended =
-      Math.ceil(dailyAvg * 30) - item.marketStock - item.inboundInProgress;
+      Math.ceil(dailyAvg * 30) - item.market_stock - item.inbound_in_progress;
     return Math.max(0, recommended);
   }
 }
 
 export default function DailyInventoryPage() {
+  const [items, setItems] = useState<DailyInventoryWithChildren[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [dailyTargets, setDailyTargets] = useState<Record<string, number>>({});
   const [orderDialog, setOrderDialog] = useState<OrderDialogState>({
@@ -70,6 +76,17 @@ export default function DailyInventoryPage() {
     memo: '',
     success: false,
   });
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const res = await inventoryApi.getDailyInventory();
+      if (res.error) setError(res.error.message);
+      else setItems(buildTree(res.data ?? []));
+      setLoading(false);
+    }
+    load();
+  }, []);
 
   const today = new Date('2026-03-02').toLocaleDateString('ko-KR', {
     year: 'numeric',
@@ -86,7 +103,7 @@ export default function DailyInventoryPage() {
     });
   }
 
-  function openOrderDialog(item: DailyInventoryItem) {
+  function openOrderDialog(item: DailyInventoryWithChildren) {
     setOrderDialog({ open: true, item, qty: '', unitPrice: '', memo: '', success: false });
   }
 
@@ -95,53 +112,36 @@ export default function DailyInventoryPage() {
       ? Number(orderDialog.qty) * Number(orderDialog.unitPrice)
       : 0;
 
-  // 발주 등록 → localStorage에 저장
-  function handleOrderSubmit() {
+  async function handleOrderSubmit() {
     if (!orderDialog.item || !orderDialog.qty || !orderDialog.unitPrice) return;
     const item = orderDialog.item;
-    const newOrder: InventoryOrder = {
-      id: `order-${Date.now()}`,
-      orderNo: `PO-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`,
-      store: '쿠팡',
-      salesType: '그로스',
-      image: '',
-      barcode: '',
-      productLink: '',
-      requestDate: '2026-03-02',
-      productName:
-        item.productName + (item.option !== '전체' ? ` (${item.option})` : ''),
-      orderQty: Number(orderDialog.qty),
-      unitPrice: Number(orderDialog.unitPrice),
-      totalAmount: totalAmount,
-      status: 'purchase_confirmed',
-      expectedShipDate: '',
-      expectedArrivalDate: '',
-      trackingNumber: '',
-      customsTax: 0,
-      domesticShipping: 0,
-      chinaFreight: 0,
-      memo: orderDialog.memo,
-    };
+    const productName =
+      (item.product_name ?? '') +
+      (item.option && item.option !== '전체' ? ` (${item.option})` : '');
 
-    // localStorage에 기존 주문 + 새 주문 저장
-    try {
-      const stored = localStorage.getItem('sellerking_orders');
-      const existingOrders: InventoryOrder[] = stored
-        ? JSON.parse(stored)
-        : [...mockInventoryOrders];
-      const updated = [...existingOrders, newOrder];
-      localStorage.setItem('sellerking_orders', JSON.stringify(updated));
-    } catch {
-      // localStorage 접근 실패 시 무시
-    }
+    await inventoryApi.createOrder({
+      order_no: `PO-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`,
+      store: '쿠팡',
+      sales_type: '그로스',
+      request_date: '2026-03-02',
+      product_name: productName,
+      order_qty: Number(orderDialog.qty),
+      unit_price: Number(orderDialog.unitPrice),
+      total_amount: totalAmount,
+      status: 'purchase_confirmed',
+      customs_tax: 0,
+      domestic_shipping: 0,
+      china_freight: 0,
+      memo: orderDialog.memo || null,
+    });
 
     setOrderDialog((prev) => ({ ...prev, success: true }));
   }
 
-  function renderRow(item: DailyInventoryItem, isChild = false): React.ReactNode {
+  function renderRow(item: DailyInventoryWithChildren, isChild = false): React.ReactNode {
     const isExpanded = expandedRows.has(item.id);
     const hasChildren = item.children && item.children.length > 0;
-    const dailyTarget = dailyTargets[item.id] ?? item.dailyTarget;
+    const dailyTarget = dailyTargets[item.id] ?? item.daily_target;
     const recommendInbound = calcRecommendInbound(item, dailyTarget);
 
     return (
@@ -177,13 +177,13 @@ export default function DailyInventoryPage() {
 
           {/* 상품ID */}
           <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap font-mono">
-            {!isChild && item.productId}
+            {!isChild && item.product_id}
           </td>
 
           {/* 상품명 */}
           <td className="px-3 py-2.5 whitespace-nowrap">
             <div className={cn('font-medium text-sm', isChild && 'text-gray-600 text-xs')}>
-              {item.productName}
+              {item.product_name ?? ''}
             </div>
             {isChild && <div className="text-xs text-gray-400">{item.option}</div>}
             {!isChild && hasChildren && (
@@ -193,42 +193,42 @@ export default function DailyInventoryPage() {
 
           {/* 순이익금 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-blue-600 font-medium text-sm">
-            {(item.netProfit / 10000).toFixed(0)}만원
+            {(item.net_profit / 10000).toFixed(0)}만원
           </td>
 
           {/* 재고금액 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600 text-sm">
-            {(item.inventoryValue / 10000).toFixed(0)}만원
+            {(item.inventory_value / 10000).toFixed(0)}만원
           </td>
 
           {/* 월판매수량 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm">
-            {item.monthSales.toLocaleString()}
+            {item.month_sales.toLocaleString()}
           </td>
 
           {/* 일판매수량 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm">
-            {item.daySales.toLocaleString()}
+            {item.day_sales.toLocaleString()}
           </td>
 
           {/* 광고판매량 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm text-gray-400">
-            {item.adSales > 0 ? item.adSales.toLocaleString() : (
+            {item.ad_sales > 0 ? item.ad_sales.toLocaleString() : (
               <span className="text-xs text-gray-300">0</span>
             )}
           </td>
 
           {/* 자연판매량 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm text-gray-400">
-            {item.naturalSales > 0 ? item.naturalSales.toLocaleString() : (
+            {item.natural_sales > 0 ? item.natural_sales.toLocaleString() : (
               <span className="text-xs text-gray-300">0</span>
             )}
           </td>
 
           {/* 진행광고비 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm text-gray-400">
-            {item.adSpend > 0 ? (
-              <span className="text-red-500">{item.adSpend.toLocaleString()}원</span>
+            {item.ad_spend > 0 ? (
+              <span className="text-red-500">{item.ad_spend.toLocaleString()}원</span>
             ) : (
               <span className="text-xs text-gray-300">0원</span>
             )}
@@ -238,16 +238,16 @@ export default function DailyInventoryPage() {
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm">
             <span
               className={cn(
-                item.marketStock < 20 ? 'text-red-600 font-semibold' : 'text-gray-700'
+                item.market_stock < 20 ? 'text-red-600 font-semibold' : 'text-gray-700'
               )}
             >
-              {item.marketStock.toLocaleString()}
+              {item.market_stock.toLocaleString()}
             </span>
           </td>
 
           {/* 국내총재고 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm text-gray-700">
-            {item.domesticStock.toLocaleString()}
+            {item.domestic_stock.toLocaleString()}
           </td>
 
           {/* 일목표수량 (편집 가능) */}
@@ -277,9 +277,9 @@ export default function DailyInventoryPage() {
 
           {/* 입고중 */}
           <td className="px-3 py-2.5 text-right whitespace-nowrap text-sm">
-            {item.inboundInProgress > 0 ? (
+            {item.inbound_in_progress > 0 ? (
               <span className="text-orange-600 font-medium">
-                {item.inboundInProgress.toLocaleString()}
+                {item.inbound_in_progress.toLocaleString()}
               </span>
             ) : (
               <span className="text-gray-400">-</span>
@@ -308,10 +308,13 @@ export default function DailyInventoryPage() {
         {/* 자식 행 렌더링 */}
         {hasChildren &&
           isExpanded &&
-          item.children!.map((child) => renderRow(child, true) as React.ReactNode)}
+          item.children!.map((child) => renderRow(child as DailyInventoryWithChildren, true) as React.ReactNode)}
       </>
     );
   }
+
+  if (loading) return <div className="p-8 text-center text-gray-500">로딩 중...</div>;
+  if (error) return <div className="p-8 text-red-500">{error}</div>;
 
   return (
     <div className="space-y-4">
@@ -358,7 +361,7 @@ export default function DailyInventoryPage() {
               <th className="px-3 py-3 text-center whitespace-nowrap">재고주문</th>
             </tr>
           </thead>
-          <tbody>{mockDailyInventory.map((item) => renderRow(item))}</tbody>
+          <tbody>{items.map((item) => renderRow(item))}</tbody>
         </table>
       </div>
 
@@ -391,8 +394,8 @@ export default function DailyInventoryPage() {
             orderDialog.item && (
               <div className="space-y-4">
                 <div className="text-sm text-gray-500">
-                  {orderDialog.item.productName}
-                  {orderDialog.item.option !== '전체' && ` · ${orderDialog.item.option}`}
+                  {orderDialog.item.product_name}
+                  {orderDialog.item.option && orderDialog.item.option !== '전체' && ` · ${orderDialog.item.option}`}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
@@ -422,7 +425,7 @@ export default function DailyInventoryPage() {
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-500">총액 (자동계산)</span>
                     <span className="font-semibold text-blue-600">
-                      {totalAmount > 0 ? formatCurrency(totalAmount) : '-'}
+                      {totalAmount > 0 ? `${totalAmount.toLocaleString()}원` : '-'}
                     </span>
                   </div>
                 </div>
