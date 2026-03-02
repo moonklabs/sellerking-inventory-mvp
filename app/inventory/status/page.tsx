@@ -1,25 +1,25 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { mockInventoryProducts } from '@/lib/mock-data';
+import { inventoryApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { ShoppingCart } from 'lucide-react';
 
-function getDaysLeft(totalStock: number, dailyAvgSales: number): number {
-  if (dailyAvgSales === 0) return 999;
-  return Math.floor(totalStock / dailyAvgSales);
-}
-
-function getRisk(days: number): 'danger' | 'warning' | 'safe' {
-  if (days <= 7) return 'danger';
-  if (days <= 14) return 'warning';
-  return 'safe';
-}
-
-function getRecommendedInbound(totalStock: number, dailyAvgSales: number): number {
-  return Math.max(0, Math.ceil(dailyAvgSales * 45 - totalStock));
-}
+type StatusItem = {
+  product_id: string;
+  alias: string;
+  name: string;
+  option: string | null;
+  market_stock: number;
+  domestic_stock: number;
+  daily_avg_sales: number;
+  monthly_target: number;
+  remaining_days: number;
+  recommended_stock: number;
+  risk_level: 'danger' | 'warning' | 'safe';
+};
 
 const RISK_CONFIG = {
   danger: {
@@ -43,17 +43,27 @@ const RISK_CONFIG = {
 };
 
 export default function InventoryStatusPage() {
-  const products = mockInventoryProducts;
+  const [products, setProducts] = useState<StatusItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const dangerCount = products.filter(
-    (p) => getRisk(getDaysLeft(p.totalStock, p.dailyAvgSales)) === 'danger'
-  ).length;
-  const warningCount = products.filter(
-    (p) => getRisk(getDaysLeft(p.totalStock, p.dailyAvgSales)) === 'warning'
-  ).length;
-  const safeCount = products.filter(
-    (p) => getRisk(getDaysLeft(p.totalStock, p.dailyAvgSales)) === 'safe'
-  ).length;
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const res = await inventoryApi.getStatus();
+      if (res.error) setError(res.error.message);
+      else setProducts(res.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  if (loading) return <div className="p-8 text-center text-gray-500">로딩 중...</div>;
+  if (error) return <div className="p-8 text-red-500">{error}</div>;
+
+  const dangerCount = products.filter((p) => p.risk_level === 'danger').length;
+  const warningCount = products.filter((p) => p.risk_level === 'warning').length;
+  const safeCount = products.filter((p) => p.risk_level === 'safe').length;
 
   return (
     <div className="space-y-6">
@@ -122,35 +132,32 @@ export default function InventoryStatusPage() {
             </thead>
             <tbody>
               {products.map((product) => {
-                const days = getDaysLeft(product.totalStock, product.dailyAvgSales);
-                const risk = getRisk(days);
+                const days = product.remaining_days;
+                const risk = product.risk_level;
                 const config = RISK_CONFIG[risk];
-                const recommended = getRecommendedInbound(
-                  product.totalStock,
-                  product.dailyAvgSales
-                );
+                const recommended = product.recommended_stock;
 
                 return (
                   <tr
-                    key={product.id}
+                    key={product.product_id}
                     className="border-b hover:bg-gray-50 transition-colors"
                   >
                     <td className="px-4 py-3 font-medium text-gray-900">{product.name}</td>
                     <td className="px-4 py-3 text-right">
-                      {product.totalStock.toLocaleString()}
+                      {product.domestic_stock.toLocaleString()}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {product.grossStock.toLocaleString()}
+                      {product.market_stock.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-gray-400">
+                      -
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {product.rocketStock.toLocaleString()}
+                      {product.monthly_target.toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      {product.monthlyTarget.toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 text-right">{product.dailyAvgSales}</td>
+                    <td className="px-4 py-3 text-right">{product.daily_avg_sales}</td>
                     <td className={cn('px-4 py-3 text-right font-semibold', config.textClass)}>
-                      {days === 999 ? '∞' : `${days}일`}
+                      {days >= 999 ? '∞' : `${days}일`}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span

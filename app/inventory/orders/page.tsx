@@ -14,17 +14,16 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  mockInventoryOrders,
-  InventoryOrder,
-  OrderStatus,
-  ORDER_STATUS_LABELS,
-  ENABLED_STATUS_FLOW,
-  formatCurrency,
-} from '@/lib/mock-data';
+import { inventoryApi } from '@/lib/api';
+import type { Order } from '@/lib/supabase/types';
+import { ORDER_STATUS_LABELS, ENABLED_STATUS_FLOW } from '@/lib/mock-data';
+import type { OrderStatus as MockOrderStatus } from '@/lib/mock-data';
 import { cn } from '@/lib/utils';
 
-const TABS: { value: OrderStatus; label: string; phase2?: boolean }[] = [
+// 탭에서 'all' 포함 상태를 위한 타입
+type TabOrderStatus = MockOrderStatus; // mock-data의 OrderStatus는 'all' 포함
+
+const TABS: { value: TabOrderStatus; label: string; phase2?: boolean }[] = [
   { value: 'recommend', label: '입고권장' },
   { value: 'request', label: '발주요청', phase2: true },
   { value: 'amount_confirmed', label: '발주금액확정', phase2: true },
@@ -39,19 +38,19 @@ const TABS: { value: OrderStatus; label: string; phase2?: boolean }[] = [
 
 interface InboundDialogState {
   open: boolean;
-  order: InventoryOrder | null;
+  order: Order | null;
   actualQty: string;
   inboundDate: string;
 }
 
 // 활성 흐름에서 다음 상태 계산
-function getNextStatus(current: OrderStatus): OrderStatus | null {
+function getNextStatus(current: TabOrderStatus): TabOrderStatus | null {
   const idx = ENABLED_STATUS_FLOW.indexOf(current);
   if (idx < 0 || idx >= ENABLED_STATUS_FLOW.length - 1) return null;
   return ENABLED_STATUS_FLOW[idx + 1];
 }
 
-function getStatusBadge(status: OrderStatus) {
+function getStatusBadge(status: string) {
   const colors: Record<string, string> = {
     recommend: 'bg-red-100 text-red-700',
     request: 'bg-orange-100 text-orange-700',
@@ -68,10 +67,12 @@ function getStatusBadge(status: OrderStatus) {
 
 function OrdersContent() {
   const searchParams = useSearchParams();
-  const initialTab = (searchParams.get('tab') as OrderStatus) ?? 'recommend';
+  const initialTab = (searchParams.get('tab') as TabOrderStatus) ?? 'recommend';
 
-  const [activeTab, setActiveTab] = useState<OrderStatus>(initialTab);
-  const [orders, setOrders] = useState<InventoryOrder[]>([]);
+  const [activeTab, setActiveTab] = useState<TabOrderStatus>(initialTab);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inboundDialog, setInboundDialog] = useState<InboundDialogState>({
     open: false,
@@ -80,43 +81,32 @@ function OrdersContent() {
     inboundDate: '2026-03-02',
   });
 
-  // localStorage에서 주문 데이터 로드 (SSR 안전)
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('sellerking_orders');
-      if (stored) {
-        const parsed = JSON.parse(stored) as InventoryOrder[];
-        // id 필드 유효성 검증 (구버전 데이터 대응)
-        const isValid = Array.isArray(parsed) && parsed.every(
-          (o) => typeof o.id === 'string' && o.id.length > 0
-        );
-        if (isValid) {
-          setOrders(parsed);
-        } else {
-          setOrders([...mockInventoryOrders]);
-          localStorage.setItem('sellerking_orders', JSON.stringify(mockInventoryOrders));
-        }
-      } else {
-        setOrders([...mockInventoryOrders]);
-        localStorage.setItem('sellerking_orders', JSON.stringify(mockInventoryOrders));
-      }
-    } catch {
-      setOrders([...mockInventoryOrders]);
+    async function load() {
+      setLoading(true);
+      const res = await inventoryApi.getOrders();
+      if (res.error) setError(res.error.message);
+      else setOrders(res.data ?? []);
+      setLoading(false);
     }
+    load();
   }, []);
 
   // URL 파라미터로 탭 초기화
   useEffect(() => {
-    const tabFromUrl = searchParams.get('tab') as OrderStatus | null;
+    const tabFromUrl = searchParams.get('tab') as TabOrderStatus | null;
     if (tabFromUrl && TABS.some((t) => t.value === tabFromUrl && !t.phase2)) {
       setActiveTab(tabFromUrl);
     }
   }, [searchParams]);
 
+  if (loading) return <div className="p-8 text-center text-gray-500">로딩 중...</div>;
+  if (error) return <div className="p-8 text-red-500">{error}</div>;
+
   const filteredOrders =
     activeTab === 'all' ? orders : orders.filter((o) => o.status === activeTab);
 
-  function toggleTab(tab: OrderStatus) {
+  function toggleTab(tab: TabOrderStatus) {
     setActiveTab(tab);
     setSelectedIds(new Set());
   }
@@ -139,41 +129,39 @@ function OrdersContent() {
   }
 
   // 선택된 주문을 다음 상태로 이동
-  function moveToNextStatus() {
+  async function moveToNextStatus() {
     if (selectedIds.size === 0 || activeTab === 'all') return;
     const nextStatus = getNextStatus(activeTab);
     if (!nextStatus) return;
 
-    const updated = orders.map((o) =>
-      selectedIds.has(o.id) ? { ...o, status: nextStatus } : o
-    );
-    setOrders(updated);
-    setSelectedIds(new Set());
-    try {
-      localStorage.setItem('sellerking_orders', JSON.stringify(updated));
-    } catch {
-      // ignore
+    const ids = Array.from(selectedIds);
+    // bulkUpdateOrders는 supabase OrderStatus 타입을 받으므로 'all' 제외된 값만 전달
+    const res = await inventoryApi.bulkUpdateOrders(ids, nextStatus as Exclude<TabOrderStatus, 'all'>);
+    if (res.data) {
+      // 성공 시 전체 재로드
+      const ordersRes = await inventoryApi.getOrders();
+      if (ordersRes.data) setOrders(ordersRes.data);
     }
+    setSelectedIds(new Set());
   }
 
   // 주문취소
-  function cancelOrders() {
+  async function cancelOrders() {
     if (selectedIds.size === 0) return;
-    const updated = orders.filter((o) => !selectedIds.has(o.id));
-    setOrders(updated);
+    const ids = Array.from(selectedIds);
+    // 개별 삭제 (bulk delete API 없음)
+    await Promise.all(ids.map((id) => inventoryApi.deleteOrder(id)));
+    // 재로드
+    const ordersRes = await inventoryApi.getOrders();
+    if (ordersRes.data) setOrders(ordersRes.data);
     setSelectedIds(new Set());
-    try {
-      localStorage.setItem('sellerking_orders', JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
   }
 
   const currentNextStatus = activeTab !== 'all' ? getNextStatus(activeTab) : null;
 
-  function getOrderCount(status: OrderStatus) {
-    if (status === 'all') return orders.length;
-    return orders.filter((o) => o.status === status).length;
+  function getOrderCount(tab: TabOrderStatus) {
+    if (tab === 'all') return orders.length;
+    return orders.filter((o) => o.status === tab).length;
   }
 
   return (
@@ -251,7 +239,7 @@ function OrdersContent() {
                       setInboundDialog({
                         open: true,
                         order: firstOrder,
-                        actualQty: String(firstOrder.orderQty),
+                        actualQty: String(firstOrder.order_qty),
                         inboundDate: '2026-03-02',
                       });
                     }
@@ -340,7 +328,7 @@ function OrdersContent() {
                     </td>
                     <td className="px-3 py-2.5 text-center text-gray-500">{idx + 1}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-gray-600 text-xs">
-                      {order.requestDate}
+                      {order.request_date}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <Badge className={cn('text-xs', getStatusBadge(order.status))}>
@@ -348,7 +336,7 @@ function OrdersContent() {
                       </Badge>
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-500 font-mono">
-                      {order.orderNo}
+                      {order.order_no}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-600">
                       {order.store}
@@ -358,14 +346,14 @@ function OrdersContent() {
                         variant="outline"
                         className={cn(
                           'text-xs',
-                          order.salesType === '로켓'
+                          order.sales_type === '로켓'
                             ? 'border-blue-300 text-blue-700'
-                            : order.salesType === '그로스'
+                            : order.sales_type === '그로스'
                             ? 'border-green-300 text-green-700'
                             : 'border-gray-300 text-gray-600'
                         )}
                       >
-                        {order.salesType}
+                        {order.sales_type}
                       </Badge>
                     </td>
                     {/* 이미지 */}
@@ -375,16 +363,16 @@ function OrdersContent() {
                       </div>
                     </td>
                     <td className="px-3 py-2.5 font-medium">
-                      <div className="max-w-[200px]">{order.productName}</div>
+                      <div className="max-w-[200px]">{order.product_name}</div>
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-400 font-mono">
                       {order.barcode || '-'}
                     </td>
                     {/* 상품링크 */}
                     <td className="px-3 py-2.5 text-center">
-                      {order.productLink ? (
+                      {order.product_link ? (
                         <a
-                          href={order.productLink}
+                          href={order.product_link}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-500 hover:text-blue-700"
@@ -396,33 +384,33 @@ function OrdersContent() {
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                      {order.orderQty.toLocaleString()}
+                      {order.order_qty.toLocaleString()}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600">
-                      {order.unitPrice.toLocaleString()}
+                      {order.unit_price.toLocaleString()}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap font-medium">
-                      {order.totalAmount.toLocaleString()}
+                      {order.total_amount.toLocaleString()}
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap text-gray-500 text-xs">
-                      {order.expectedShipDate || '-'}
+                      {order.expected_ship_date || '-'}
                     </td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap text-gray-500 text-xs">
-                      {order.expectedArrivalDate || '-'}
+                      {order.expected_arrival_date || '-'}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-xs text-gray-500">
-                      {order.trackingNumber || '-'}
+                      {order.tracking_number || '-'}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600 text-xs">
-                      {order.customsTax > 0 ? order.customsTax.toLocaleString() : '-'}
+                      {order.customs_tax > 0 ? order.customs_tax.toLocaleString() : '-'}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600 text-xs">
-                      {order.domesticShipping > 0
-                        ? order.domesticShipping.toLocaleString()
+                      {order.domestic_shipping > 0
+                        ? order.domestic_shipping.toLocaleString()
                         : '-'}
                     </td>
                     <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600 text-xs">
-                      {order.chinaFreight > 0 ? order.chinaFreight.toLocaleString() : '-'}
+                      {order.china_freight > 0 ? order.china_freight.toLocaleString() : '-'}
                     </td>
                     <td className="px-3 py-2.5 text-gray-500 text-xs max-w-[160px] truncate">
                       {order.memo || '-'}
@@ -446,11 +434,11 @@ function OrdersContent() {
           </DialogHeader>
           {inboundDialog.order && (
             <div className="space-y-4">
-              <div className="text-sm text-gray-500">{inboundDialog.order.productName}</div>
+              <div className="text-sm text-gray-500">{inboundDialog.order.product_name}</div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">발주량</span>
                 <span className="font-semibold">
-                  {inboundDialog.order.orderQty.toLocaleString()}개
+                  {inboundDialog.order.order_qty.toLocaleString()}개
                 </span>
               </div>
               <div className="space-y-1.5">
@@ -475,9 +463,9 @@ function OrdersContent() {
                 />
               </div>
               {inboundDialog.actualQty &&
-                inboundDialog.order.orderQty !== Number(inboundDialog.actualQty) && (
+                inboundDialog.order.order_qty !== Number(inboundDialog.actualQty) && (
                   <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
-                    발주량({inboundDialog.order.orderQty})과 실수량(
+                    발주량({inboundDialog.order.order_qty})과 실수량(
                     {inboundDialog.actualQty})이 다릅니다.
                   </div>
                 )}

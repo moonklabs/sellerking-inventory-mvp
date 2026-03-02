@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Printer, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,20 +21,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  mockProducts,
-  calcMargin,
-  calcMarginRate,
-  calcROAS,
-  Product,
-  CostHistory,
-} from '@/lib/mock-data';
+import { productsApi } from '@/lib/api';
+import type { Product, CostHistory } from '@/lib/supabase/types';
+import { calcMargin, calcMarginRate, calcROAS } from '@/lib/mock-data';
 import { cn } from '@/lib/utils';
 
 type MarketStockAction = 'add' | 'edit';
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([...mockProducts]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [costHistoryMap, setCostHistoryMap] = useState<Record<string, CostHistory[]>>({});
 
   // 원가 이력 팝업 상태
   const [costHistoryDialog, setCostHistoryDialog] = useState<{
@@ -43,12 +41,14 @@ export default function ProductsPage() {
     newDate: string;
     newCost: string;
     adding: boolean;
+    historyLoading: boolean;
   }>({
     open: false,
     product: null,
     newDate: new Date().toISOString().split('T')[0],
     newCost: '',
     adding: false,
+    historyLoading: false,
   });
 
   // 마켓재고 팝업 상태
@@ -65,9 +65,19 @@ export default function ProductsPage() {
   const [barcodeSelectedProducts, setBarcodeSelectedProducts] = useState<Set<string>>(new Set());
   const [barcodeQty, setBarcodeQty] = useState('1');
 
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const res = await productsApi.list();
+      if (res.error) setError(res.error.message);
+      else setProducts(res.data ?? []);
+      setLoading(false);
+    }
+    load();
+  }, []);
+
   // 원가 이력 팝업 열기
-  function openCostHistory(product: Product) {
-    // products state에서 최신 product 찾기
+  async function openCostHistory(product: Product) {
     const latest = products.find((p) => p.id === product.id) ?? product;
     setCostHistoryDialog({
       open: true,
@@ -75,51 +85,39 @@ export default function ProductsPage() {
       newDate: new Date().toISOString().split('T')[0],
       newCost: '',
       adding: false,
+      historyLoading: true,
     });
+    const res = await productsApi.getCostHistory(latest.id);
+    if (res.data) {
+      setCostHistoryMap((prev) => ({ ...prev, [latest.id]: res.data! }));
+    }
+    setCostHistoryDialog((prev) => ({ ...prev, historyLoading: false }));
   }
 
   // 원가 이력 추가
-  function addCostHistory() {
+  async function addCostHistory() {
     const { product, newDate, newCost } = costHistoryDialog;
     if (!product || !newDate || !newCost) return;
     const cost = Number(newCost);
     if (isNaN(cost) || cost <= 0) return;
 
-    const newEntry: CostHistory = { date: newDate, cost };
-    setProducts((prev) =>
-      prev.map((p) => {
-        if (p.id !== product.id) return p;
-        const updatedHistory = [...p.costHistory, newEntry].sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-        );
-        return {
-          ...p,
-          currentCost: updatedHistory[0].cost,
-          costHistory: updatedHistory,
-          updatedAt: new Date().toISOString().split('T')[0],
-        };
-      })
-    );
-    // 팝업 내 product 갱신
-    setCostHistoryDialog((prev) => {
-      const updatedHistory = [
-        ...(prev.product?.costHistory ?? []),
-        newEntry,
-      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      return {
-        ...prev,
-        product: prev.product
-          ? {
-              ...prev.product,
-              currentCost: updatedHistory[0].cost,
-              costHistory: updatedHistory,
-            }
-          : null,
-        newDate: new Date().toISOString().split('T')[0],
-        newCost: '',
-        adding: false,
-      };
-    });
+    const res = await productsApi.addCostHistory(product.id, { date: newDate, cost });
+    if (res.data) {
+      // 제품 목록 새로고침 (current_cost 갱신)
+      const productsRes = await productsApi.list();
+      if (productsRes.data) setProducts(productsRes.data);
+      // 이력 새로고침
+      const histRes = await productsApi.getCostHistory(product.id);
+      if (histRes.data) {
+        setCostHistoryMap((prev) => ({ ...prev, [product.id]: histRes.data! }));
+      }
+    }
+    setCostHistoryDialog((prev) => ({
+      ...prev,
+      newDate: new Date().toISOString().split('T')[0],
+      newCost: '',
+      adding: false,
+    }));
   }
 
   // 마켓재고 팝업 열기
@@ -131,19 +129,17 @@ export default function ProductsPage() {
   }
 
   // 마켓재고 저장
-  function saveMarketStock() {
+  async function saveMarketStock() {
     const { product } = marketStockDialog;
     if (!product || !stockQty) return;
     const qty = Number(stockQty);
     if (isNaN(qty)) return;
-    const newStock = stockAction === 'add' ? product.marketStock + qty : qty;
-    setProducts((prev) =>
-      prev.map((p) =>
-        p.id === product.id
-          ? { ...p, marketStock: newStock, updatedAt: new Date().toISOString().split('T')[0] }
-          : p
-      )
-    );
+    const newStock = stockAction === 'add' ? product.market_stock + qty : qty;
+
+    const res = await productsApi.update(product.id, { market_stock: newStock });
+    if (res.data) {
+      setProducts((prev) => prev.map((p) => p.id === product.id ? res.data! : p));
+    }
     setMarketStockDialog({ open: false, product: null });
   }
 
@@ -155,6 +151,9 @@ export default function ProductsPage() {
       return next;
     });
   }
+
+  if (loading) return <div className="p-8 text-center text-gray-500">로딩 중...</div>;
+  if (error) return <div className="p-8 text-red-500">{error}</div>;
 
   return (
     <div className="space-y-4">
@@ -194,9 +193,9 @@ export default function ProductsPage() {
           </thead>
           <tbody>
             {products.map((p) => {
-              const margin = calcMargin(p.price, p.currentCost, p.shippingFee);
-              const marginRate = calcMarginRate(p.price, p.currentCost, p.shippingFee);
-              const roas = calcROAS(p.price, p.currentCost, p.shippingFee);
+              const margin = calcMargin(p.price, p.current_cost, p.shipping_fee);
+              const marginRate = calcMarginRate(p.price, p.current_cost, p.shipping_fee);
+              const roas = calcROAS(p.price, p.current_cost, p.shipping_fee);
 
               return (
                 <tr
@@ -219,10 +218,10 @@ export default function ProductsPage() {
                     </Badge>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap font-mono">
-                    {p.productId}
+                    {p.product_id}
                   </td>
                   <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap font-mono">
-                    {p.optionCode}
+                    {p.option_code}
                   </td>
                   <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap font-mono">
                     {p.barcode}
@@ -233,16 +232,16 @@ export default function ProductsPage() {
                     {p.price.toLocaleString()}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap text-orange-600">
-                    {p.discountPrice.toLocaleString()}
+                    {p.discount_price.toLocaleString()}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    <div className="text-gray-700 font-medium">{p.currentCost.toLocaleString()}</div>
-                    {p.costHistory.length > 1 && (
-                      <div className="text-[10px] text-gray-400">이력 {p.costHistory.length}건</div>
+                    <div className="text-gray-700 font-medium">{p.current_cost.toLocaleString()}</div>
+                    {(costHistoryMap[p.id]?.length ?? 0) > 1 && (
+                      <div className="text-[10px] text-gray-400">이력 {costHistoryMap[p.id].length}건</div>
                     )}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-500">
-                    {p.shippingFee.toLocaleString()}
+                    {p.shipping_fee.toLocaleString()}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                     <span className={cn(margin >= 0 ? 'text-blue-600' : 'text-red-600')}>
@@ -266,20 +265,20 @@ export default function ProductsPage() {
                     {roas}%
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600">
-                    {p.reviewCount.toLocaleString()}
+                    {p.review_count.toLocaleString()}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                     <span
                       className={cn(
                         'font-medium',
-                        p.reviewScore >= 4.5
+                        p.review_score >= 4.5
                           ? 'text-green-600'
-                          : p.reviewScore >= 4.0
+                          : p.review_score >= 4.0
                           ? 'text-yellow-600'
                           : 'text-red-600'
                       )}
                     >
-                      ⭐ {p.reviewScore}
+                      ⭐ {p.review_score}
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
@@ -287,14 +286,14 @@ export default function ProductsPage() {
                       onClick={() => openMarketStock(p)}
                       className="text-blue-600 hover:underline font-medium"
                     >
-                      {p.marketStock.toLocaleString()}
+                      {p.market_stock.toLocaleString()}
                     </button>
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-700">
-                    {p.domesticStock.toLocaleString()}
+                    {p.domestic_stock.toLocaleString()}
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-400 text-xs">
-                    {p.updatedAt}
+                    {p.updated_at}
                   </td>
                 </tr>
               );
@@ -322,38 +321,46 @@ export default function ProductsPage() {
 
               {/* 이력 목록 */}
               <div className="border rounded-lg divide-y">
-                {costHistoryDialog.product.costHistory.length === 0 ? (
-                  <div className="px-4 py-3 text-sm text-gray-400 text-center">
-                    이력 없음
-                  </div>
+                {costHistoryDialog.historyLoading ? (
+                  <div className="text-sm text-gray-400 text-center py-4">이력 로딩 중...</div>
                 ) : (
-                  costHistoryDialog.product.costHistory
-                    .slice()
-                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                    .map((h, idx) => (
-                      <div
-                        key={idx}
-                        className={cn(
-                          'flex items-center justify-between px-4 py-2.5',
-                          idx === 0 && 'bg-amber-50'
-                        )}
-                      >
-                        <span className="text-xs text-gray-500">{h.date}</span>
-                        <span
+                  (() => {
+                    const history = costHistoryMap[costHistoryDialog.product?.id ?? ''] ?? [];
+                    if (history.length === 0) {
+                      return (
+                        <div className="px-4 py-3 text-sm text-gray-400 text-center">
+                          이력 없음
+                        </div>
+                      );
+                    }
+                    return history
+                      .slice()
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .map((h, idx) => (
+                        <div
+                          key={h.id}
                           className={cn(
-                            'font-medium',
-                            idx === 0 ? 'text-amber-700' : 'text-gray-700'
+                            'flex items-center justify-between px-4 py-2.5',
+                            idx === 0 && 'bg-amber-50'
                           )}
                         >
-                          {h.cost.toLocaleString()}원
-                        </span>
-                        {idx === 0 && (
-                          <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100 ml-1">
-                            현재
-                          </Badge>
-                        )}
-                      </div>
-                    ))
+                          <span className="text-xs text-gray-500">{h.date}</span>
+                          <span
+                            className={cn(
+                              'font-medium',
+                              idx === 0 ? 'text-amber-700' : 'text-gray-700'
+                            )}
+                          >
+                            {h.cost.toLocaleString()}원
+                          </span>
+                          {idx === 0 && (
+                            <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100 ml-1">
+                              현재
+                            </Badge>
+                          )}
+                        </div>
+                      ));
+                  })()
                 )}
               </div>
 
@@ -453,7 +460,7 @@ export default function ProductsPage() {
               </div>
               <div className="text-sm">
                 현재 마켓재고:{' '}
-                <span className="font-semibold">{marketStockDialog.product.marketStock}개</span>
+                <span className="font-semibold">{marketStockDialog.product.market_stock}개</span>
               </div>
               <RadioGroup
                 value={stockAction}
@@ -484,7 +491,7 @@ export default function ProductsPage() {
                   <span className="font-semibold text-blue-600">
                     {stockAction === 'add'
                       ? (
-                          marketStockDialog.product.marketStock + Number(stockQty)
+                          marketStockDialog.product.market_stock + Number(stockQty)
                         ).toLocaleString()
                       : Number(stockQty).toLocaleString()}
                     개
