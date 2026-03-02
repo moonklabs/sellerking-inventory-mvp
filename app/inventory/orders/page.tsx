@@ -85,7 +85,17 @@ function OrdersContent() {
     try {
       const stored = localStorage.getItem('sellerking_orders');
       if (stored) {
-        setOrders(JSON.parse(stored));
+        const parsed = JSON.parse(stored) as InventoryOrder[];
+        // id 필드 유효성 검증 (구버전 데이터 대응)
+        const isValid = Array.isArray(parsed) && parsed.every(
+          (o) => typeof o.id === 'string' && o.id.length > 0
+        );
+        if (isValid) {
+          setOrders(parsed);
+        } else {
+          setOrders([...mockInventoryOrders]);
+          localStorage.setItem('sellerking_orders', JSON.stringify(mockInventoryOrders));
+        }
       } else {
         setOrders([...mockInventoryOrders]);
         localStorage.setItem('sellerking_orders', JSON.stringify(mockInventoryOrders));
