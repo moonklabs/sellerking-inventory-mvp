@@ -758,6 +758,8 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
 // 활성화된 상태 흐름 (Phase2 탭 제외)
 export const ENABLED_STATUS_FLOW: OrderStatus[] = [
   'recommend',
+  'request',
+  'amount_confirmed',
   'purchase_confirmed',
   'purchase_complete',
   'china_arrived',

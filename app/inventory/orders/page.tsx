@@ -74,6 +74,8 @@ function OrdersContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [moving, setMoving] = useState(false);
+  const [cancelConfirm, setCancelConfirm] = useState(false);
   const [inboundDialog, setInboundDialog] = useState<InboundDialogState>({
     open: false,
     order: null,
@@ -134,27 +136,35 @@ function OrdersContent() {
     const nextStatus = getNextStatus(activeTab);
     if (!nextStatus) return;
 
+    setMoving(true);
     const ids = Array.from(selectedIds);
-    // bulkUpdateOrders는 supabase OrderStatus 타입을 받으므로 'all' 제외된 값만 전달
     const res = await inventoryApi.bulkUpdateOrders(ids, nextStatus as Exclude<TabOrderStatus, 'all'>);
-    if (res.data) {
-      // 성공 시 전체 재로드
+    if (res.error) {
+      alert(`이동 실패: ${res.error.message}`);
+    } else {
       const ordersRes = await inventoryApi.getOrders();
       if (ordersRes.data) setOrders(ordersRes.data);
+      setActiveTab(nextStatus);
     }
     setSelectedIds(new Set());
+    setMoving(false);
   }
 
-  // 주문취소
+  // 주문취소 확인 후 삭제
   async function cancelOrders() {
     if (selectedIds.size === 0) return;
+    setCancelConfirm(true);
+  }
+
+  async function confirmCancel() {
+    setCancelConfirm(false);
+    setMoving(true);
     const ids = Array.from(selectedIds);
-    // 개별 삭제 (bulk delete API 없음)
     await Promise.all(ids.map((id) => inventoryApi.deleteOrder(id)));
-    // 재로드
     const ordersRes = await inventoryApi.getOrders();
     if (ordersRes.data) setOrders(ordersRes.data);
     setSelectedIds(new Set());
+    setMoving(false);
   }
 
   const currentNextStatus = activeTab !== 'all' ? getNextStatus(activeTab) : null;
@@ -165,7 +175,37 @@ function OrdersContent() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative">
+      {/* 이동 중 로딩 오버레이 */}
+      {moving && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl px-10 py-8 flex flex-col items-center gap-4 min-w-[280px]">
+            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-gray-700 font-medium">처리 중...</p>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div className="bg-blue-500 h-2 rounded-full animate-pulse w-3/4" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 주문취소 확인 다이얼로그 */}
+      <Dialog open={cancelConfirm} onOpenChange={setCancelConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>주문 취소 확인</DialogTitle>
+          </DialogHeader>
+          <p className="text-gray-600 py-2">
+            선택한 <span className="font-bold text-red-600">{selectedIds.size}건</span>의 발주를 취소(삭제)합니다.<br />
+            이 작업은 되돌릴 수 없습니다.
+          </p>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCancelConfirm(false)}>돌아가기</Button>
+            <Button variant="destructive" onClick={confirmCancel}>취소 확인</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* 탭 */}
       <div className="bg-white rounded-xl border shadow-sm overflow-x-auto">
         <div className="flex border-b min-w-max">
