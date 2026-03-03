@@ -422,7 +422,7 @@ function OrdersContent() {
 
         {/* 테이블 */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[1800px] text-sm">
             <thead>
               <tr className="border-b bg-gray-50 text-xs text-gray-500">
                 <th className="px-3 py-3 text-center w-10">

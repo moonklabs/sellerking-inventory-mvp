@@ -332,7 +332,7 @@ export default function DailyInventoryPage() {
 
       {/* 테이블 */}
       <div className="bg-white rounded-xl border shadow-sm overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[1600px] text-sm">
           <thead>
             <tr className="border-b bg-gray-50 text-xs text-gray-500">
               <th className="w-8 px-3 py-3 text-center">+</th>
