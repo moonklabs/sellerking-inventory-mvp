@@ -119,6 +119,9 @@ function OrdersContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [moving, setMoving] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [editDialog, setEditDialog] = useState<{ open: boolean; order: Order | null }>({ open: false, order: null });
+  const [editForm, setEditForm] = useState({ memo: '', tracking_number: '', customs_tax: '', domestic_shipping: '', china_freight: '' });
+  const [editSaving, setEditSaving] = useState(false);
   const [inboundDialog, setInboundDialog] = useState<InboundDialogState>({
     open: false,
     order: null,
@@ -210,6 +213,33 @@ function OrdersContent() {
     setMoving(false);
   }
 
+  function openEditDialog(order: Order) {
+    setEditForm({
+      memo: order.memo || '',
+      tracking_number: order.tracking_number || '',
+      customs_tax: order.customs_tax ? String(order.customs_tax) : '',
+      domestic_shipping: order.domestic_shipping ? String(order.domestic_shipping) : '',
+      china_freight: order.china_freight ? String(order.china_freight) : '',
+    });
+    setEditDialog({ open: true, order });
+  }
+
+  async function saveEdit() {
+    if (!editDialog.order) return;
+    setEditSaving(true);
+    await inventoryApi.updateOrder(editDialog.order.id, {
+      memo: editForm.memo,
+      tracking_number: editForm.tracking_number,
+      customs_tax: Number(editForm.customs_tax) || 0,
+      domestic_shipping: Number(editForm.domestic_shipping) || 0,
+      china_freight: Number(editForm.china_freight) || 0,
+    });
+    const res = await inventoryApi.getOrders();
+    if (res.data) setOrders(res.data);
+    setEditSaving(false);
+    setEditDialog({ open: false, order: null });
+  }
+
   const currentNextStatus = activeTab !== 'all' ? getNextStatus(activeTab) : null;
 
   function getOrderCount(tab: TabOrderStatus) {
@@ -245,6 +275,52 @@ function OrdersContent() {
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setCancelConfirm(false)}>돌아가기</Button>
             <Button variant="destructive" onClick={confirmCancel}>취소 확인</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 발주 수정 다이얼로그 */}
+      <Dialog open={editDialog.open} onOpenChange={(o) => !o && setEditDialog({ open: false, order: null })}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>발주 수정</DialogTitle>
+            {editDialog.order && (
+              <p className="text-sm text-gray-500 mt-1">{editDialog.order.product_name} · {editDialog.order.order_no}</p>
+            )}
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="text-sm font-medium">트래킹번호</Label>
+              <Input className="mt-1" placeholder="트래킹번호 입력" value={editForm.tracking_number} onChange={(e) => setEditForm(f => ({ ...f, tracking_number: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-sm font-medium">관부가세</Label>
+                <Input className="mt-1" type="number" placeholder="0" value={editForm.customs_tax} onChange={(e) => setEditForm(f => ({ ...f, customs_tax: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-sm font-medium">국내운임비</Label>
+                <Input className="mt-1" type="number" placeholder="0" value={editForm.domestic_shipping} onChange={(e) => setEditForm(f => ({ ...f, domestic_shipping: e.target.value }))} />
+              </div>
+              <div>
+                <Label className="text-sm font-medium">중국운임비</Label>
+                <Input className="mt-1" type="number" placeholder="0" value={editForm.china_freight} onChange={(e) => setEditForm(f => ({ ...f, china_freight: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label className="text-sm font-medium">메모</Label>
+              <textarea
+                className="mt-1 w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                rows={3}
+                placeholder="메모 입력"
+                value={editForm.memo}
+                onChange={(e) => setEditForm(f => ({ ...f, memo: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setEditDialog({ open: false, order: null })}>취소</Button>
+            <Button onClick={saveEdit} disabled={editSaving}>{editSaving ? '저장 중...' : '저장'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -380,6 +456,7 @@ function OrdersContent() {
                 <th className="px-3 py-3 text-right whitespace-nowrap">국내운임비</th>
                 <th className="px-3 py-3 text-right whitespace-nowrap">중국내운임비</th>
                 <th className="px-3 py-3 text-left whitespace-nowrap min-w-[120px]">메모</th>
+                <th className="px-3 py-3 text-center whitespace-nowrap sticky right-0 bg-gray-50 shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)]">수정</th>
               </tr>
             </thead>
             <tbody>
@@ -501,6 +578,15 @@ function OrdersContent() {
                         const res = await inventoryApi.getOrders();
                         if (res.data) setOrders(res.data);
                       }} />
+                    </td>
+                    <td className="px-3 py-2.5 text-center sticky right-0 bg-white shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)]">
+                      <button
+                        onClick={() => openEditDialog(order)}
+                        className="text-gray-400 hover:text-blue-500 transition-colors p-1 rounded hover:bg-blue-50"
+                        title="수정"
+                      >
+                        ✏️
+                      </button>
                     </td>
                   </tr>
                 ))
