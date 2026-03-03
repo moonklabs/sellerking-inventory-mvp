@@ -50,6 +50,49 @@ function getNextStatus(current: TabOrderStatus): TabOrderStatus | null {
   return ENABLED_STATUS_FLOW[idx + 1];
 }
 
+// 인라인 메모 편집 셀
+function MemoCell({ order, onSave }: { order: Order; onSave: (id: string, memo: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(order.memo || '');
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    await onSave(order.id, value);
+    setSaving(false);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1 min-w-[160px]">
+        <input
+          autoFocus
+          className="border rounded px-2 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-400"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false); }}
+        />
+        <button onClick={handleSave} disabled={saving} className="text-blue-500 hover:text-blue-700 font-bold text-xs whitespace-nowrap">
+          {saving ? '...' : '저장'}
+        </button>
+        <button onClick={() => setEditing(false)} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center gap-1 group cursor-pointer truncate"
+      onClick={() => { setValue(order.memo || ''); setEditing(true); }}
+      title="클릭하여 메모 편집"
+    >
+      <span className="truncate">{order.memo || <span className="text-gray-300 italic">메모 없음</span>}</span>
+      <span className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs shrink-0">✏️</span>
+    </div>
+  );
+}
+
 function getStatusBadge(status: string) {
   const colors: Record<string, string> = {
     recommend: 'bg-red-100 text-red-700',
@@ -452,8 +495,12 @@ function OrdersContent() {
                     <td className="px-3 py-2.5 text-right whitespace-nowrap text-gray-600 text-xs">
                       {order.china_freight > 0 ? order.china_freight.toLocaleString() : '-'}
                     </td>
-                    <td className="px-3 py-2.5 text-gray-500 text-xs max-w-[160px] truncate">
-                      {order.memo || '-'}
+                    <td className="px-3 py-2.5 text-gray-500 text-xs max-w-[160px]">
+                      <MemoCell order={order} onSave={async (id, memo) => {
+                        await inventoryApi.updateOrder(id, { memo });
+                        const res = await inventoryApi.getOrders();
+                        if (res.data) setOrders(res.data);
+                      }} />
                     </td>
                   </tr>
                 ))
