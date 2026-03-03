@@ -13,6 +13,7 @@ import {
   Target,
   Calculator,
   Send,
+  LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -95,8 +96,18 @@ export default function Sidebar() {
       </nav>
 
       {/* 하단 */}
-      <div className="px-5 py-4 border-t border-gray-700 text-xs text-gray-500">
-        v1.0.0 MVP
+      <div className="px-5 py-4 border-t border-gray-700 space-y-3">
+        <button
+          onClick={async () => {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.href = '/login';
+          }}
+          className="flex items-center gap-2 w-full text-xs text-gray-400 hover:text-white transition-colors"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          로그아웃
+        </button>
+        <p className="text-xs text-gray-600">v1.0.0 MVP</p>
       </div>
     </aside>
   );
