@@ -23,6 +23,14 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ data: null, error: { message: '유효하지 않은 요청입니다.' } }, { status: 400 });
+    }
+    if (!body.name || !body.alias) {
+      return NextResponse.json({ data: null, error: { message: '상품명(name)과 별칭(alias)은 필수입니다.' } }, { status: 400 });
+    }
+
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from('products')

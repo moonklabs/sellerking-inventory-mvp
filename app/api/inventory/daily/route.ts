@@ -27,6 +27,14 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ data: null, error: { message: '유효하지 않은 요청입니다.' } }, { status: 400 });
+    }
+    if (!body.product_id || !body.record_date) {
+      return NextResponse.json({ data: null, error: { message: '상품ID(product_id)와 날짜(record_date)는 필수입니다.' } }, { status: 400 });
+    }
+
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from('daily_inventory')
